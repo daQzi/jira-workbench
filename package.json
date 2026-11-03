@@ -1,0 +1,37 @@
+{
+  "name": "jira-workbench",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=26.8.2 <27"
+  },
+  "description": "TAPD 风格的 Jira 6 前端工作台（本机运行，外挂在 Jira REST API 之上）",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "server": "node server/index.mjs",
+    "build": "tsc -b && vite build",
+    "start": "node server/index.mjs --serve-dist",
+    "test": "vitest run",
+    "typecheck": "tsc -b",
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:write": "node scripts/smoke-write.mjs",
+    "smoke:v3": "node scripts/smoke-v3.mjs",
+    "dev:write": "WB_ALLOW_WRITE=1 WB_WRITE_PROJECTS=AGENT node scripts/dev.mjs",
+    "dev:all": "WB_ALLOW_WRITE=1 node scripts/dev.mjs",
+    "desktop": "node scripts/build-desktop.mjs"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vitest": "4.1.12"
+  }
+}
