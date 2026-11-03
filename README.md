@@ -65,7 +65,8 @@ npm run dev:all     # 写模式，按 Jira 权限所有项目可写（会写真�
 
 ```bash
 npm run desktop                       # 默认构建当前平台和架构
-npm run desktop -- mac-arm64 mac-x64   # 需要 macOS + Xcode Command Line Tools
+npm run desktop -- mac-arm64           # Apple 芯片 Mac + Xcode Command Line Tools
+npm run desktop -- mac-x64             # 推荐 Intel Mac runner 构建
 npm run desktop -- win-x64 win-arm64   # 可在 macOS 或 Windows 打包
 node scripts/verify-desktop.mjs mac-arm64  # 发行目录与本地 API 冒烟
 ```

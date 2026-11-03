@@ -37,12 +37,15 @@ describe('createSessionStore', () => {
     store.save(new Map([[SID, { user: 'u1', lastSeen: Date.now(), cookies: new Map([['JSESSIONID', 'secret-cookie']]) }]]), 8 * HOUR);
     const raw = readFileSync(store.dataFile, 'utf8');
     expect(raw).not.toContain('secret-cookie');
-    expect(raw).not.toContain('u1');
+    // Base64 密文可能随机包含短字符串 u1；检查明文 JSON 字段，避免随机误报。
+    expect(raw).not.toContain('"user":"u1"');
+    expect(JSON.parse(raw)).not.toHaveProperty('user');
     if (process.platform !== 'win32') {
       expect(statSync(store.dataFile).mode & 0o777).toBe(0o600);
       expect(statSync(path.join(dir, 'session.key')).mode & 0o777).toBe(0o600);
     }
     const again = createSessionStore(dir, { log: silent }).load(8 * HOUR);
+    expect(again.get(SID).user).toBe('u1');
     expect(again.get(SID).cookies.get('JSESSIONID')).toBe('secret-cookie');
   });
 
