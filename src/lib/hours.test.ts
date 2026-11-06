@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildReport, dateOf, parseDuration, periodKey, periodsBetween, presetRange, resolveHourFields, type HourItem } from './hours';
 import type { Issue } from './types';
+import { hoursJql } from '../views/HoursView';
+import { NO_VERSION } from './versions';
 
 describe('parseDuration', () => {
   it('常见写法', () => {
@@ -108,5 +110,99 @@ describe('buildReport', () => {
     const r = buildReport([item(mk('A-5', '编码任务'), null)]);
     expect(r.noHours).toBe(1);
     expect(r.total).toBe(0);
+  });
+});
+
+describe('Bug 工时统计条件', () => {
+  const options = { excludeRequirementBugs: true };
+
+  it('仅排除关联父需求的 Bug，保留独立 Bug 和其他子任务', () => {
+    const r = buildReport([
+      item(mk('A-2', 'BUG及数据问题', {}, 'A-1'), 3),
+      item(mk('A-3', '编码任务', {}, 'A-1'), 4),
+      item(mk('A-4', '其他任务', {}, 'A-1'), 2),
+      item(mk('A-5', 'BUG及数据问题'), 1),
+    ], options);
+    expect(r).toMatchObject({ total: 7, counted: 3, noHours: 0, excludedBugs: 1, byPeriod: { '2026-10-26': 7 } });
+    expect(r.rows[0].children.map((c) => c.issue.key)).toEqual(['A-3', 'A-4']);
+    expect(r.rows[1].key).toBe('A-5');
+  });
+
+  it('全部计入时恢复原有汇总', () => {
+    const r = buildReport([
+      item(mk('A-1', '需求'), 10),
+      item(mk('A-2', 'BUG及数据问题', {}, 'A-1'), 3),
+      item(mk('A-3', '编码任务', {}, 'A-1'), 4),
+    ], { excludeRequirementBugs: false });
+    expect(r).toMatchObject({ total: 7, counted: 2, excludedBugs: 0 });
+  });
+
+  it('平铺仍按原始关联排除 Bug，保留问题链接且不按父需求分组', () => {
+    const bug = mk('A-2', 'Bug', {}, 'A-1');
+    const task = mk('A-3', '编码任务', {}, 'A-1');
+    const r = buildReport([item(bug, 3), item(task, 4)], { ...options, grouped: false });
+    expect(r).toMatchObject({ total: 4, counted: 1, excludedBugs: 1 });
+    expect(r.rows.map((row) => row.key)).toEqual(['A-3']);
+    expect(r.rows[0].children).toEqual([]);
+    expect(task.fields.issuelinks).toHaveLength(1);
+    expect(buildReport([item(bug, 3), item(task, 4)], { grouped: false }).total).toBe(7);
+  });
+
+  it('普通关联、反向 blocks 和指向非需求的 blocks 不视作父需求', () => {
+    const related = mk('A-2', 'BUG及数据问题', {}, 'A-1');
+    related.fields.issuelinks![0].type.name = 'Relates';
+    const reversed = mk('A-3', 'BUG及数据问题', {}, 'A-1');
+    const link = reversed.fields.issuelinks![0];
+    link.inwardIssue = link.outwardIssue;
+    delete link.outwardIssue;
+    const other = mk('A-4', 'BUG及数据问题', {}, 'A-5');
+    other.fields.issuelinks![0].outwardIssue!.fields.issuetype.name = '编码任务';
+    const r = buildReport([item(related, 1), item(reversed, 2), item(other, 3)], options);
+    expect(r).toMatchObject({ total: 6, counted: 3, excludedBugs: 0 });
+  });
+
+  it('排除的 Bug 不进入未填工时数，也不留下空父需求行', () => {
+    const r = buildReport([item(mk('A-2', '缺陷', {}, 'A-1'), null)], options);
+    expect(r).toMatchObject({ rows: [], total: 0, counted: 0, noHours: 0, excludedBugs: 1, byPeriod: {} });
+  });
+
+  it('只排除 Bug 子项时，需求自身仍按无子项的现有口径计入', () => {
+    const r = buildReport([item(mk('A-1', '需求'), 8), item(mk('A-2', 'BUG及数据问题', {}, 'A-1'), 3)], options);
+    expect(r).toMatchObject({ total: 8, counted: 1, excludedBugs: 1 });
+    expect(r.rows[0].own?.issue.key).toBe('A-1');
+  });
+});
+
+describe('工时自定义条件 JQL', () => {
+  const settings: Parameters<typeof hoursJql>[0] = {
+    range: 'thisMonth', custom: { from: '2026-11-01', to: '2026-11-30' }, granularity: 'week',
+    basis: 'devDone', measure: 'estimate', who: 'dev', hoursPerDay: 8, unit: 'h',
+    panels: [], columns: [], types: [], grouped: true, excludeRequirementBugs: true, filtersByProject: {},
+  };
+  const fields = { estimate: [], devStart: [], devDone: ['customfield_2'] };
+  const filters = { text: '登录+修复', stages: ['dev', 'done'] as const, priority: '高"优先级', component: '平台', version: 'v1', extraJql: 'labels = "加班" OR labels = "支持"' };
+
+  it('所有筛选与项目、人员、日期取交集，补充条件中的 OR 被括号包裹', () => {
+    const jql = hoursJql({ ...settings, filtersByProject: { TEST: { ...filters, stages: [...filters.stages] } } }, fields, settings.custom, 'TEST');
+    for (const clause of ['project = "TEST"', 'cf[10204] = currentUser()', 'cf[2] >= "2026-11-01"', 'component = "平台"', 'affectedVersion = "v1"', 'summary ~ "登录 修复"', 'status in ("开发中", "联调中", "处理中", "产品验证通过", "关闭")', 'priority = "高\\"优先级"', '(labels = "加班" OR labels = "支持")']) {
+      expect(jql).toContain(clause);
+    }
+    expect(jql).toMatch(/ ORDER BY updated DESC$/);
+  });
+
+  it('编号精确查找、未设置版本和实际工时条件', () => {
+    const jql = hoursJql({ ...settings, measure: 'spent', filtersByProject: { '*': { ...filters, stages: [], text: 'test-12', version: NO_VERSION, extraJql: '' } } }, fields, settings.custom);
+    expect(jql).toContain('key = "TEST-12"');
+    expect(jql).toContain('affectedVersion is EMPTY');
+    expect(jql).toContain('timespent > 0');
+    expect(jql).not.toContain('status in');
+  });
+
+  it('项目切换不沿用其他项目的新增筛选条件', () => {
+    const jql = hoursJql({ ...settings, filtersByProject: { TEST: { ...filters, stages: [] } } }, fields, settings.custom, 'OTHER');
+    expect(jql).not.toContain('affectedVersion');
+    expect(jql).not.toContain('priority =');
+    expect(jql).not.toContain('labels =');
+    expect(jql).toContain('project = "OTHER"');
   });
 });

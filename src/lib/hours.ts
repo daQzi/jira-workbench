@@ -209,6 +209,13 @@ export interface HourReport {
   counted: number;
   /** 有日期但没有工时的问题数 */
   noHours: number;
+  /** 按统计条件排除的关联需求 Bug 数 */
+  excludedBugs: number;
+}
+
+export interface HourReportOptions {
+  grouped?: boolean;
+  excludeRequirementBugs?: boolean;
 }
 
 const add = (m: Record<string, number>, k: string | null, v: number) => {
@@ -220,7 +227,7 @@ const add = (m: Record<string, number>, k: string | null, v: number) => {
  * - 子项（编码任务等）挂到其父需求下；父需求不在结果里时用链接里的摘要补一行
  * - 需求本身也在结果里且有子项时，需求自身的预估只展示、不计入合计（子项已拆分）
  */
-export function buildReport(items: HourItem[]): HourReport {
+export function buildReport(items: HourItem[], { grouped = true, excludeRequirementBugs = false }: HourReportOptions = {}): HourReport {
   const rows = new Map<string, HourRow>();
   const order: string[] = [];
   const rowFor = (key: string, summary: string, typeName: string, status?: string) => {
@@ -232,9 +239,15 @@ export function buildReport(items: HourItem[]): HourReport {
     }
     return r;
   };
+  let excludedBugs = 0;
   for (const it of items) {
     const parent = parentOf(it.issue);
-    if (parent) {
+    // 先按原始关系筛选，再决定展示分组，避免平铺时丢失关联条件。
+    if (excludeRequirementBugs && parent && /^(bug(?:及数据问题)?|缺陷)$/i.test(it.issue.fields.issuetype.name.trim())) {
+      excludedBugs++;
+      continue;
+    }
+    if (grouped && parent) {
       rowFor(parent.key, parent.fields.summary, parent.fields.issuetype.name, parent.fields.status.name).children.push(it);
     } else {
       const f = it.issue.fields;
@@ -243,7 +256,7 @@ export function buildReport(items: HourItem[]): HourReport {
       r.summary = f.summary;
     }
   }
-  const report: HourReport = { rows: [], total: 0, byPeriod: {}, counted: 0, noHours: 0 };
+  const report: HourReport = { rows: [], total: 0, byPeriod: {}, counted: 0, noHours: 0, excludedBugs };
   for (const key of order) {
     const r = rows.get(key)!;
     const counted = r.children.length ? r.children : r.own ? [r.own] : [];

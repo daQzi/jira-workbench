@@ -4,7 +4,9 @@ import {
   BASIS_LABEL, buildReport, dateOf, formatHours, hoursOf, MEASURE_LABEL, periodKey, periodsBetween, presetRange, RANGE_LABEL,
   resolveHourFields, type Basis, type Granularity, type HourFields, type HourItem, type HourRow, type Measure, type RangePreset,
 } from '../lib/hours';
-import { quote } from '../lib/jql';
+import { buildJql, quote } from '../lib/jql';
+import { STAGES, type StageId } from '../lib/stages';
+import { NO_VERSION, versionGroups } from '../lib/versions';
 import { useAsync } from '../lib/useAsync';
 import { useSession } from '../lib/session';
 import type { Issue } from '../lib/types';
@@ -15,6 +17,17 @@ import { DailyImportDialog } from '../components/DailyImportDialog';
 type Panel = 'cards' | 'chart' | 'table';
 type Column = 'project' | 'status' | 'date' | 'periods';
 type Who = 'dev' | 'devOrAssignee';
+
+interface HourFilters {
+  text: string;
+  stages: StageId[];
+  priority: string;
+  component: string;
+  version: string;
+  extraJql: string;
+}
+
+const EMPTY_FILTERS: HourFilters = { text: '', stages: [], priority: '', component: '', version: '', extraJql: '' };
 
 interface Settings {
   range: RangePreset;
@@ -29,6 +42,8 @@ interface Settings {
   columns: Column[];
   types: string[];
   grouped: boolean;
+  excludeRequirementBugs: boolean;
+  filtersByProject: Record<string, HourFilters>;
 }
 
 const STORE = 'wb.hours.v1';
@@ -45,6 +60,8 @@ const DEFAULTS: Settings = {
   columns: ['project', 'status', 'date', 'periods'],
   types: [],
   grouped: true,
+  excludeRequirementBugs: true,
+  filtersByProject: {},
 };
 
 function loadSettings(): Settings {
@@ -92,6 +109,11 @@ export function hoursJql(s: Settings, f: HourFields, range: { from: string; to: 
     }
     parts.push(own.length ? `(${own.join(' OR ')})` : 'key = "NONE-0"');
   }
+  const filters = s.filtersByProject[projectKey ?? '*'] ?? EMPTY_FILTERS;
+  const filterClause = buildJql({ text: filters.text, stages: filters.stages, component: filters.component, version: filters.version }, '');
+  if (filterClause) parts.push(filterClause);
+  if (filters.priority) parts.push(`priority = ${quote(filters.priority)}`);
+  if (filters.extraJql.trim()) parts.push(`(${filters.extraJql.trim()})`);
   if (s.measure === 'spent') parts.push('timespent > 0');
   return `${parts.join(' AND ')} ORDER BY updated DESC`;
 }
@@ -126,6 +148,23 @@ export function HoursView({ projectKey, onOpen }: { projectKey: string | null; o
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setS((x) => ({ ...x, [k]: v }));
   const toggleIn = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
+  const filterKey = projectKey ?? '*';
+  const filters = s.filtersByProject[filterKey] ?? EMPTY_FILTERS;
+  const setFilters = (patch: Partial<HourFilters>) => setS((prev) => ({
+    ...prev,
+    filtersByProject: { ...prev.filtersByProject, [filterKey]: { ...(prev.filtersByProject[filterKey] ?? EMPTY_FILTERS), ...patch } },
+  }));
+  const [searchText, setSearchText] = useState(filters.text);
+  useEffect(() => setSearchText(filters.text), [filters.text, filterKey]);
+  useEffect(() => {
+    if (searchText === filters.text) return;
+    const timer = setTimeout(() => setFilters({ text: searchText }), 350);
+    return () => clearTimeout(timer);
+  }, [searchText, filters.text, filterKey]);
+  const hasFilters = !!(filters.text || filters.stages.length || filters.priority || filters.component || filters.version || filters.extraJql);
+  const project = useAsync(() => projectKey ? api.project(projectKey) : Promise.resolve(null), [projectKey]);
+  const priorities = useAsync(() => api.priorities(), []);
+
   const range = useMemo(() => presetRange(s.range, new Date(), s.custom), [s.range, s.custom]);
   const fieldDefs = useAsync(() => api.fields(), []);
   const hf = useMemo(() => (fieldDefs.data ? resolveHourFields(fieldDefs.data) : null), [fieldDefs.data]);
@@ -145,12 +184,7 @@ export function HoursView({ projectKey, onOpen }: { projectKey: string | null; o
       const date = dateOf(issue, hf, s.basis);
       return { issue, hours: hoursOf(issue, hf, s), date, period: date ? periodKey(date, s.granularity) : null };
     });
-    // 不分组：每个问题自成一行
-    if (!s.grouped) {
-      const flat = items.map((it) => ({ ...it, issue: { ...it.issue, fields: { ...it.issue.fields, issuelinks: [] } } }));
-      return buildReport(flat);
-    }
-    return buildReport(items);
+    return buildReport(items, { grouped: s.grouped, excludeRequirementBugs: s.excludeRequirementBugs });
   }, [data.data, hf, s]);
 
   // 与 buildReport 的计数口径一致：有子项只看子项，否则看自身
@@ -207,11 +241,46 @@ export function HoursView({ projectKey, onOpen }: { projectKey: string | null; o
             </button>
           )}
           <button className="btn small" aria-expanded={showConfig} onClick={() => setShowConfig((v) => !v)}>
-            ⚙ 自定义面板
+            ⚙ 统计条件与面板
           </button>
         </div>
         {showConfig && (
           <div className="hours-config">
+            <div className="cfg-group">
+              <span>统计条件（同时满足，同组状态任选其一）</span>
+              <div className="check-group">
+                <input className="input" type="search" aria-label="工时搜索" placeholder="标题关键字或问题编号" value={searchText} onChange={(e) => setSearchText(e.target.value)} />
+                <select className="select" aria-label="工时优先级" value={filters.priority} disabled={priorities.loading || !!priorities.error} onChange={(e) => setFilters({ priority: e.target.value })}>
+                  <option value="">全部优先级</option>
+                  {filters.priority && !priorities.data?.some((p) => p.name === filters.priority) && <option value={filters.priority}>{filters.priority}</option>}
+                  {priorities.data?.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
+                </select>
+                {projectKey && <>
+                  <select className="select" aria-label="工时模块" value={filters.component} disabled={project.loading || !!project.error} onChange={(e) => setFilters({ component: e.target.value })}>
+                    <option value="">全部模块</option>
+                    {filters.component && !project.data?.components.some((c) => c.name === filters.component) && <option value={filters.component}>{filters.component}（当前不可用）</option>}
+                    {project.data?.components.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+                  </select>
+                  <select className="select" aria-label="工时影响版本" value={filters.version} disabled={project.loading || !!project.error} onChange={(e) => setFilters({ version: e.target.value })}>
+                    <option value="">全部影响版本</option>
+                    <option value={NO_VERSION}>未设置版本</option>
+                    {filters.version && filters.version !== NO_VERSION && !project.data?.versions?.some((v) => v.name === filters.version) && <option value={filters.version}>{filters.version}（当前不可用）</option>}
+                    {versionGroups(project.data?.versions).map((g) => <optgroup key={g.label} label={g.label}>{g.items.map((v) => <option key={v.id} value={v.name}>{v.name}</option>)}</optgroup>)}
+                  </select>
+                </>}
+                {hasFilters && <button className="btn small ghost" onClick={() => { setSearchText(''); setFilters(EMPTY_FILTERS); }}>清空统计条件</button>}
+              </div>
+              {(project.error || priorities.error) && <span className="muted">筛选选项加载失败：{(project.error ?? priorities.error)?.message}</span>}
+              <div className="check-group" role="group" aria-label="工时状态">
+                {STAGES.map((stage) => <button key={stage.id} className="chip" aria-pressed={filters.stages.includes(stage.id)} title={stage.statuses.join('、')} onClick={() => setFilters({ stages: toggleIn(filters.stages, stage.id) })}>{stage.name}</button>)}
+                {!filters.stages.length && <span className="muted">不选即全部状态</span>}
+              </div>
+              <label>
+                <span>补充 JQL 条件（可选）</span>
+                <input className="input" aria-label="补充 JQL 条件" placeholder={'如 labels = "加班" 或 cf[12345] = "是"，填写后按回车或移出输入框生效'} key={`${filterKey}:${filters.extraJql}`} defaultValue={filters.extraJql} onBlur={(e) => setFilters({ extraJql: e.target.value.trim() })} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+                <span className="muted">与上面的条件取交集，仅填写条件，不含 ORDER BY；语法错误会显示 Jira 返回的原因。</span>
+              </label>
+            </div>
             <label>
               <span>统计谁</span>
               <select className="select" value={s.who} onChange={(e) => set('who', e.target.value as Who)}>
@@ -238,6 +307,14 @@ export function HoursView({ projectKey, onOpen }: { projectKey: string | null; o
                   </option>
                 ))}
               </select>
+            </label>
+            <label>
+              <span>Bug 工时</span>
+              <select className="select" value={s.excludeRequirementBugs ? 'exclude' : 'include'} onChange={(e) => set('excludeRequirementBugs', e.target.value === 'exclude')}>
+                <option value="exclude">排除关联需求的 Bug</option>
+                <option value="include">全部计入</option>
+              </select>
+              <span className="muted">关联需求指通过 blocks 挂在父需求下。</span>
             </label>
             <label>
               <span>每天工时</span>
@@ -280,7 +357,7 @@ export function HoursView({ projectKey, onOpen }: { projectKey: string | null; o
               </div>
             </div>
             <div className="cfg-foot">
-              <span className="muted">设置保存在本机浏览器。</span>
+              <span className="muted">设置保存在本机浏览器，新增统计条件按项目分别记忆。</span>
               <button className="btn small ghost" onClick={() => setS({ ...DEFAULTS, custom: s.custom })}>
                 恢复默认
               </button>
@@ -290,12 +367,15 @@ export function HoursView({ projectKey, onOpen }: { projectKey: string | null; o
         <div className="hours-note muted">
           {range.from} ~ {range.to} · {s.who === 'dev' ? '开发人员是我' : '开发人员或经办人是我'} · {MEASURE_LABEL[s.measure]} · 按「{BASIS_LABEL[s.basis]}」归属
           {s.measure === 'estimate' && ' · 有子项的需求只计子项，避免重复'}
+          {s.excludeRequirementBugs ? ' · 排除关联需求的 Bug' : ' · Bug 全部计入'}
+          {hasFilters && ' · 已启用自定义统计条件'}
+          {!!report?.excludedBugs && `（已排除 ${report.excludedBugs} 条）`}
         </div>
       </div>
 
       {error && <ErrorState error={error} onRetry={data.reload} />}
       {!error && !report && <Loading rows={6} />}
-      {report && data.data && (
+      {!error && report && data.data && (
         <>
           {data.data.total > data.data.issues.length && (
             <div className="banner" style={{ margin: '0 0 10px' }}>
