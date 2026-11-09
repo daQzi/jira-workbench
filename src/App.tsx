@@ -11,6 +11,10 @@ import { ErrorState, Loading } from './components/States';
 import { TreeView } from './views/TreeView';
 import { BoardView } from './views/BoardView';
 import { MyWorkView } from './views/MyWorkView';
+import { sharedView } from './components/SavedViews';
+import { ReviewView } from './views/ReviewView';
+import { VersionView } from './views/VersionView';
+import { NotificationsView } from './views/NotificationsView';
 import { McpView } from './views/McpView';
 import { HoursView } from './views/HoursView';
 import { TypeBadge } from './components/Badges';
@@ -75,10 +79,10 @@ export function App() {
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
-const PAGE_LABEL: Record<Page, string> = { me: '我的工作台', hours: '我的工时', tree: '需求树', flat: '全部问题', board: '看板', mcp: 'MCP 服务' };
+const PAGE_LABEL: Record<Page, string> = { me: '我的工作台', hours: '我的工时', tree: '需求树', flat: '全部问题', board: '看板', mcp: 'MCP 服务', review: '工时检查与汇总', versions: '版本进展', notifications: '通知中心' };
 const NAV: { label: string; pages: Page[] }[] = [
-  { label: '个人', pages: ['me', 'hours'] },
-  { label: '项目', pages: ['tree', 'flat', 'board'] },
+  { label: '个人', pages: ['me', 'hours', 'review', 'notifications'] },
+  { label: '项目', pages: ['tree', 'flat', 'board', 'versions'] },
   { label: '设置', pages: ['mcp'] },
 ];
 
@@ -130,7 +134,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
     return () => window.removeEventListener('keydown', on);
   }, [writable, createIn, route.page]);
   // 筛选条件按项目记忆（localStorage），切项目时换成该项目上次的条件
-  const [filterOf, setFilterOf] = useState(() => ({ project: pk, filter: initialFilter(pk) }));
+  const [filterOf, setFilterOf] = useState(() => ({ project: pk, filter: sharedView()?.filter ?? initialFilter(pk) }));
   if (filterOf.project !== pk) setFilterOf({ project: pk, filter: initialFilter(pk) });
   const savedFilter = filterOf.project === pk ? filterOf.filter : initialFilter(pk);
   const setFilter = useCallback(
@@ -210,7 +214,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             <h1>{PAGE_LABEL[route.page]}</h1>
             <div className="sub">
               <span className="scope-tag">{route.page === 'mcp' ? '本机设置' : scopeText}</span>
-              {route.page === 'me' && '我负责、开发或测试的未结束问题'}
+              {route.page === 'me' && '我参与的事项、临期风险与最近完成工作'}
               {route.page === 'hours' && '开发人员是我的问题，按时间统计（按父需求分组）'}
               {projectPage && '父子关系按「子项 blocks 需求」识别'}
             </div>
@@ -222,7 +226,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           )}
         </header>
 
-        {projectPage && pk && (
+        {projectPage && route.page !== 'versions' && pk && (
           <FilterBar
             value={filter}
             onChange={setFilter}
@@ -250,11 +254,14 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
 
         <div className="content" style={projectPage ? undefined : { paddingTop: 16 }}>
           {route.page === 'mcp' && <McpView />}
+          {route.page === 'review' && <ReviewView projectKey={pk} onOpen={openIssue}/>}
+          {route.page === 'versions' && pk && <VersionView key={pk} projectKey={pk} onOpen={openIssue}/>}
+          {route.page === 'notifications' && <NotificationsView projectKey={pk} onOpen={openIssue} onMcp={()=>go({page:'mcp',issue:null})}/>}
           {route.page === 'me' && <MyWorkView projectKey={pk} onOpen={openIssue} />}
           {route.page === 'hours' && <HoursView projectKey={pk} onOpen={openIssue} />}
           {projectPage && pk && project.error && <ErrorState error={project.error} onRetry={project.reload} />}
           {projectPage && pk && !project.error && !project.data && <Loading />}
-          {projectPage && pk && project.data && route.page !== 'board' && (
+          {projectPage && pk && project.data && (route.page === 'tree' || route.page === 'flat') && (
             <TreeView
               projectKey={pk}
               filter={filter}
@@ -262,6 +269,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
               selectedKey={route.issue}
               onOpen={openIssue}
               onCreate={setCreating}
+              onFilterChange={setFilter}
             />
           )}
           {projectPage && pk && project.data && route.page === 'board' && <BoardView projectKey={pk} filter={filter} onOpen={openIssue} />}

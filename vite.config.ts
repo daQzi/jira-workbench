@@ -8,8 +8,9 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     proxy: {
-      '/mcp': 'http://127.0.0.1:8787',
-      '/api': 'http://127.0.0.1:8787',
+      '/mcp': { target: 'http://127.0.0.1:8787', changeOrigin: false },
+      // 保留浏览器访问的 Host，与 Origin 一致；Vite 字符串简写会隐式开启 changeOrigin。
+      '/api': { target: 'http://127.0.0.1:8787', changeOrigin: false },
     },
   },
   test: {

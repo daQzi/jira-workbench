@@ -1,169 +1,41 @@
 import { useState } from 'react';
-import { api, LIST_FIELDS } from '../lib/api';
-import { MINE_CLAUSE, quote } from '../lib/jql';
-import { STAGES, stageOf, type StageId } from '../lib/stages';
-import { relativeTime } from '../lib/format';
-import { useAsync } from '../lib/useAsync';
 import { useSession } from '../lib/session';
-import type { Issue, SearchResult } from '../lib/types';
-import { StatusPill, TypeBadge } from '../components/Badges';
+import type { Issue } from '../lib/types';
 import { NO_VERSION, versionNames } from '../lib/versions';
-import { Empty, ErrorState, Loading } from '../components/States';
-import { CopyIssueButton } from '../components/CopyIssue';
+import { ErrorState, Loading } from '../components/States';
+import { ManagementTable } from '../components/ManagementTable';
+import { WORK_VIEWS, matchesView, loadLocal, saveLocal, scopeKey, dueDate, blockers, type WorkView } from '../lib/management';
+import { useManagementData } from '../lib/useManagementData';
 
-const ACTIVE_STAGES: StageId[] = ['todo', 'design', 'dev', 'test'];
-const ACTIVE_STATUSES = STAGES.filter((s) => ACTIVE_STAGES.includes(s.id)).flatMap((s) => s.statuses);
-const statusList = `(${ACTIVE_STATUSES.map((s) => `"${s}"`).join(', ')})`;
-
-// 我是经办人/开发人员/测试人员，且未结束；projectKey 为空时跨项目
-const jqlOf = (projectKey: string | null) =>
-  `${projectKey ? `project = ${quote(projectKey)} AND ` : ''}${MINE_CLAUSE} AND status in ${statusList} ORDER BY priority ASC, updated DESC`;
-
-type Quick = 'all' | 'urgent' | 'bug';
-const QUICK: Record<Quick, (i: Issue) => boolean> = {
-  all: () => true,
-  urgent: (i) => i.fields.priority?.name === '特急',
-  bug: (i) => i.fields.issuetype.name === 'BUG及数据问题',
-};
-// 每组默认只显示前几条，避免某一阶段几十条把页面撑得很长
-const FOLD_AT = 6;
-const VER_CHIPS = 5;
-
+interface WorkPrefs { view: WorkView; text: string; version: string }
+interface Saved { id:string; name:string; prefs:WorkPrefs }
 export function MyWorkView({ projectKey, onOpen }: { projectKey: string | null; onOpen: (key: string) => void }) {
-  const { version } = useSession();
-  const [quick, setQuick] = useState<Quick>('all');
-  // 版本快捷筛选（只在当前结果里过滤，不重新查询）；切项目时清掉
-  const [ver, setVer] = useState({ project: projectKey, name: '' });
-  const verName = ver.project === projectKey ? ver.name : '';
-  const [open, setOpen] = useState<Set<StageId>>(new Set());
-  const { data, error, reload } = useAsync<SearchResult>(
-    (signal) => api.search(jqlOf(projectKey), { maxResults: 200, fields: [...LIST_FIELDS, 'project'] }, signal),
-    [version, projectKey],
-  );
-  if (error && !data) return <ErrorState error={error} onRetry={reload} />;
-  if (!data) return <Loading />;
-  if (!data.issues.length) return <Empty text={projectKey ? `在 ${projectKey} 手上没有进行中的问题` : '手上没有进行中的问题'} />;
-
-  const verOf = (i: Issue) => versionNames(i.fields.versions);
-  const byVersion = (i: Issue) => !verName || (verName === NO_VERSION ? !verOf(i).length : verOf(i).includes(verName));
-  const shown = data.issues.filter((i) => QUICK[quick](i) && byVersion(i));
-  const verCounts = versionCounts(data.issues);
-  // 版本多时只把条数最多的几个做成按钮，其余收进下拉；选中的版本始终显示为按钮
-  const verChips = verCounts.slice(0, VER_CHIPS);
-  const picked = verCounts.find(([n]) => n === verName);
-  if (picked && !verChips.includes(picked)) verChips.push(picked);
-  const verMore = verCounts.filter((x) => !verChips.includes(x));
-  const groups = new Map<StageId, Issue[]>(ACTIVE_STAGES.map((s) => [s, []]));
-  for (const issue of shown) {
-    const st = stageOf(issue.fields.status.name);
-    if (st && groups.has(st)) groups.get(st)!.push(issue);
-  }
-  const urgent = data.issues.filter(QUICK.urgent).length;
-  const bugs = data.issues.filter(QUICK.bug).length;
-  const pick = (q: Quick) => setQuick((cur) => (cur === q && q !== 'all' ? 'all' : q));
-  const toggle = (sid: StageId) => setOpen((o) => (o.has(sid) ? new Set([...o].filter((x) => x !== sid)) : new Set([...o, sid])));
-
-  const stats: { q: Quick; n: number; label: string; color?: string }[] = [
-    { q: 'all', n: data.total, label: '进行中' },
-    { q: 'urgent', n: urgent, label: '特急', color: 'var(--danger)' },
-    { q: 'bug', n: bugs, label: '缺陷' },
-  ];
-
-  return (
-    <>
-      <div className="stat-row" role="group" aria-label="快速筛选">
-        {stats.map((x, i) => (
-          <button
-            key={x.q}
-            className="stat stat-btn"
-            aria-pressed={quick === x.q}
-            disabled={x.n === 0 && x.q !== 'all'}
-            title={x.q === 'all' ? '显示全部' : quick === x.q ? '再点一次取消筛选' : `只看${x.label}`}
-            style={{ animationDelay: `${i * 60}ms` }}
-            onClick={() => pick(x.q)}
-          >
-            <b style={x.color ? { color: x.color } : undefined}>{x.n}</b>
-            <span>{x.label}</span>
-          </button>
-        ))}
-        {data.total > data.issues.length && <div className="banner">仅统计前 {data.issues.length} 条</div>}
-      </div>
-      {verCounts.length > 0 && (
-        <div className="desk-versions" role="group" aria-label="按版本筛选">
-          <span className="muted">版本</span>
-          {verChips.map(([name, n]) => (
-            <button
-              key={name}
-              className="chip chip-version"
-              aria-pressed={verName === name}
-              title={verName === name ? '再点一次取消' : `只看${name === NO_VERSION ? '未设置版本' : name}`}
-              onClick={() => setVer({ project: projectKey, name: verName === name ? '' : name })}
-            >
-              {name === NO_VERSION ? '未设置' : name}
-              <small>{n}</small>
-            </button>
-          ))}
-          {verMore.length > 0 && (
-            <select
-              className={`select select-sm${verMore.some(([n]) => n === verName) ? ' is-set' : ''}`}
-              aria-label="更多版本"
-              value={verMore.some(([n]) => n === verName) ? verName : ''}
-              onChange={(e) => setVer({ project: projectKey, name: e.target.value })}
-            >
-              <option value="">更多 {verMore.length} 个版本…</option>
-              {verMore.map(([name, n]) => (
-                <option key={name} value={name}>
-                  {name === NO_VERSION ? '未设置版本' : name}（{n}）
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-      )}
-      {shown.length === 0 && <Empty text="没有符合条件的问题" />}
-      <div className="desk">
-        {ACTIVE_STAGES.map((sid, i) => {
-          const items = groups.get(sid)!;
-          // 筛选后没有内容的阶段直接隐藏，减少空卡片
-          if ((quick !== 'all' || verName) && items.length === 0) return null;
-          const expanded = open.has(sid);
-          const visible = expanded ? items : items.slice(0, FOLD_AT);
-          return (
-            <section className="desk-group" key={sid} style={{ animationDelay: `${i * 70}ms` }}>
-              <h3>
-                <span className={`stage-${sid}`}>
-                  <span style={{ color: 'var(--ink)' }}>{STAGES.find((s) => s.id === sid)!.name}</span>
-                </span>
-                <span className="mono muted">{items.length}</span>
-              </h3>
-              {items.length === 0 && <div className="desk-empty">无</div>}
-              <div className={expanded ? 'desk-items expanded' : 'desk-items'}>
-                {visible.map((issue) => (
-                  <div className="desk-row" key={issue.key}>
-                    <button className="desk-item" onClick={() => onOpen(issue.key)}>
-                      <TypeBadge type={issue.fields.issuetype.name} />
-                      <span className="mono muted">{issue.key}</span>
-                      <span className="summary" title={[issue.fields.summary, ...verOf(issue).map((n) => `版本：${n}`)].join('\n')}>
-                        {issue.fields.summary}
-                      </span>
-                      <StatusPill status={issue.fields.status.name} />
-                      <span className="muted desk-time">{relativeTime(issue.fields.updated)}</span>
-                    </button>
-                    <CopyIssueButton issueKey={issue.key} summary={issue.fields.summary} className="row-action desk-copy" />
-                  </div>
-                ))}
-              </div>
-              {items.length > FOLD_AT && (
-                <button className="desk-more" aria-expanded={expanded} onClick={() => toggle(sid)}>
-                  {expanded ? '收起' : `展开其余 ${items.length - FOLD_AT} 条`}
-                </button>
-              )}
-            </section>
-          );
-        })}
-      </div>
-    </>
-  );
+  const {me,toast}=useSession();
+  const key=`wb.workViews.v1:${scopeKey(me.jiraBaseUrl,me.name,projectKey)}`;
+  const valid=(v:unknown):v is WorkPrefs=>!!v&&typeof v==='object'&&Object.hasOwn(WORK_VIEWS,String((v as WorkPrefs).view))&&typeof(v as WorkPrefs).text==='string'&&typeof(v as WorkPrefs).version==='string';
+  const [state,setState]=useState(()=>({key,prefs:loadLocal(key,{view:'active',text:'',version:''} as WorkPrefs,valid)}));
+  const prefs=state.key===key?state.prefs:loadLocal(key,{view:'active',text:'',version:''} as WorkPrefs,valid);
+  const [saved,setSaved]=useState<{key:string;views:Saved[]}>(()=>({key,views:loadLocal<Saved[]>(`${key}:saved`,[],(v):v is Saved[]=>Array.isArray(v)&&v.every(x=>typeof x?.id==='string'&&typeof x.name==='string'&&valid(x.prefs)))}));
+  const views=saved.key===key?saved.views:loadLocal<Saved[]>(`${key}:saved`,[],(v):v is Saved[]=>Array.isArray(v)&&v.every(x=>typeof x?.id==='string'&&typeof x.name==='string'&&valid(x.prefs)));
+  const [name,setName]=useState('');
+  const data=useManagementData(projectKey);
+  const set=(patch:Partial<WorkPrefs>)=>{const next={...prefs,...patch};setState({key,prefs:next});if(!saveLocal(key,next))toast('无法保存工作视图','error');};
+  if(!data.data)return data.error?<ErrorState error={data.error} onRetry={data.reload}/>:<Loading/>;
+  const {issues,total,hourFields}=data.data;
+  const base=issues.filter(i=>(!prefs.text||`${i.key} ${i.fields.summary}`.toLowerCase().includes(prefs.text.toLowerCase()))&&(!prefs.version||(prefs.version===NO_VERSION?!versionNames(i.fields.versions).length:versionNames(i.fields.versions).includes(prefs.version))));
+  const shown=base.filter(i=>matchesView(i,prefs.view,hourFields,me.name));
+  return <>
+    <div className="workspace-intro"><div><h2>把今天需要处理的事情，放在眼前。</h2><p>今日待办按今天到期或今天开始开发判断；已结束事项保留近30天。</p></div><button className="btn" onClick={data.reload}>刷新</button></div>
+    {data.error&&<ErrorState error={data.error} onRetry={data.reload}/>}
+    {total>issues.length&&<div className="management-notice">共 {total} 项，当前仅加载前 {issues.length} 项；下方数量、筛选与导出基于已加载结果，请切换具体项目缩小范围。</div>}
+    <div className="work-view-grid" role="group" aria-label="工作视图">{(Object.keys(WORK_VIEWS)as WorkView[]).map(v=><button key={v} className={`work-view${prefs.view===v?' active':''}`} aria-pressed={prefs.view===v} onClick={()=>set({view:v})}><span>{WORK_VIEWS[v]}</span><b>{base.filter(i=>matchesView(i,v,hourFields,me.name)).length}</b></button>)}</div>
+    <div className="saved-views"><input className="input" type="search" aria-label="工作标题或编号" placeholder="标题或编号" value={prefs.text} onChange={e=>set({text:e.target.value})}/><select className="select" aria-label="工作影响版本" value={prefs.version} onChange={e=>set({version:e.target.value})}><option value="">全部影响版本</option><option value={NO_VERSION}>未设置版本</option>{[...new Set(issues.flatMap(i=>versionNames(i.fields.versions)))].sort().map(v=><option key={v}>{v}</option>)}</select><select className="select" aria-label="已保存的工作视图" value="" onChange={e=>{const v=views.find(v=>v.id===e.target.value);if(v)set(v.prefs);}}><option value="">打开保存的视图</option>{views.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}</select><input className="input" aria-label="工作视图名称" placeholder="为当前工作视图命名" value={name} maxLength={40} onChange={e=>setName(e.target.value)}/><button className="btn small" disabled={!name.trim()} onClick={()=>{const next=[...views.filter(v=>v.name!==name.trim()),{id:crypto.randomUUID(),name:name.trim(),prefs}].slice(-20);setSaved({key,views:next});saveLocal(`${key}:saved`,next);setName('');}}>保存工作视图</button><button className="btn small ghost" onClick={()=>set({view:'active',text:'',version:''})}>恢复默认</button></div>
+    {!!views.length&&<details className="saved-manage"><summary>管理已保存视图</summary>{views.map(v=><span key={v.id}>{v.name}<button className="btn small ghost" aria-label={`删除工作视图 ${v.name}`} onClick={()=>{const next=views.filter(x=>x.id!==v.id);setSaved({key,views:next});saveLocal(`${key}:saved`,next);}}>删除</button></span>)}</details>}
+    {prefs.view==='blocked'&&<div className="management-notice">仅显示未完成的入向 Blocks 依赖；需求下子项的父子链接不视为阻塞。</div>}
+    {prefs.view==='missing'&&<div className="management-notice">按“开发人员、开发预估时间、开发完成/解决日期”检查。字段未配置也会提示，点击问题到详情补填。</div>}
+    {(prefs.view==='overdue'||prefs.view==='soon'||prefs.view==='blocked')&&<div className="risk-strip">{shown.slice(0,5).map(i=><button key={i.key} className="chip" onClick={()=>onOpen(i.key)}>{i.key} · {prefs.view==='blocked'?`等待 ${blockers(i).map(b=>b.key).join('、')}`:`到期 ${dueDate(i)}`}</button>)}</div>}
+    <ManagementTable issues={shown} onOpen={onOpen} scope={`work:${projectKey??'*'}`} onChanged={data.reload}/>
+  </>;
 }
 
 /** 手上问题涉及的版本及条数，按条数倒序；未设置版本的放最后 */

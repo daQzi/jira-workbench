@@ -13,6 +13,10 @@ import { QuickAdd } from '../components/QuickAdd';
 import { Empty, ErrorState, Loading } from '../components/States';
 import { CopyIssueButton } from '../components/CopyIssue';
 import type { FilterState } from '../components/FilterBar';
+import { ManagementTable } from '../components/ManagementTable';
+import { SavedViews, sharedView } from '../components/SavedViews';
+import { readList, writeList, type ListPrefs } from '../lib/listPrefs';
+import { scopeKey } from '../lib/management';
 import type { CreateTarget } from '../components/CreateDialog';
 
 const PAGE_SIZE = 50;
@@ -25,22 +29,28 @@ interface Props {
   selectedKey: string | null;
   onOpen: (key: string) => void;
   onCreate: (t: CreateTarget) => void;
+  onFilterChange: (f: FilterState) => void;
 }
 
 interface PageData {
+  scope: string;
   total: number;
   issues: Issue[];
   children: Map<string, Issue>;
 }
 
-export function TreeView({ projectKey, filter, mode, selectedKey, onOpen, onCreate }: Props) {
-  const { version, bump, canWriteProject } = useSession();
+export function TreeView({ projectKey, filter, mode, selectedKey, onOpen, onCreate, onFilterChange }: Props) {
+  const { version, bump, canWriteProject, me } = useSession();
+  const prefKey = `wb.list.v1:${scopeKey(me.jiraBaseUrl,me.name,`project:${projectKey}`)}`;
+  const [list,setList]=useState<ListPrefs>(()=>sharedView()?.list??readList(prefKey));
+  const [listScope,setListScope]=useState(prefKey);
+  if(listScope!==prefKey){setListScope(prefKey);setList(readList(prefKey));}
   const writable = canWriteProject(projectKey);
   const [page, setPage] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // 正在快速添加子项的需求
   const [adding, setAdding] = useState<string | null>(null);
-  const filterKey = JSON.stringify([projectKey, filter, mode]);
+  const filterKey = JSON.stringify([projectKey, filter, mode, list.sort, list.direction]);
   const [lastFilterKey, setLastFilterKey] = useState(filterKey);
   if (filterKey !== lastFilterKey) {
     // 筛选条件变化时回到第一页
@@ -60,8 +70,8 @@ export function TreeView({ projectKey, filter, mode, selectedKey, onOpen, onCrea
         onlyMine: filter.onlyMine,
         recentClosedDays: filter.hideOldClosed ? 30 : undefined,
         closedStatuses: CLOSED_STATUSES,
-      }),
-    [projectKey, filter, mode],
+      }, `${({updated:'updated',due:'due',priority:'priority',key:'key',created:'created'}[list.sort])} ${list.direction.toUpperCase()}`),
+    [projectKey, filter, mode, list.sort, list.direction],
   );
 
   const { data, error, loading, reload } = useAsync<PageData>(
@@ -70,13 +80,13 @@ export function TreeView({ projectKey, filter, mode, selectedKey, onOpen, onCrea
       // 树模式下一次性补齐本页所有子项的完整字段（链接里没有经办人等）
       const childKeys = mode === 'tree' ? r.issues.flatMap((i) => childLinks(i).map((c) => c.key)) : [];
       const children = childKeys.length ? await fetchByKeys(childKeys, signal) : new Map();
-      return { total: r.total, issues: r.issues, children };
+      return { total: r.total, issues: r.issues, children, scope:JSON.stringify([jql,page,mode]) };
     },
     [jql, page, mode, version],
   );
 
   if (error && !data) return <ErrorState error={error} onRetry={reload} />;
-  if (!data) return <Loading />;
+  if (!data || data.scope!==JSON.stringify([jql,page,mode])) return error?<ErrorState error={error} onRetry={reload}/>:<Loading />;
 
   const toggle = (key: string) =>
     setExpanded((s) => {
@@ -109,7 +119,8 @@ export function TreeView({ projectKey, filter, mode, selectedKey, onOpen, onCrea
           />
         </div>
       )}
-      {data.issues.length === 0 ? (
+      {mode === 'flat' && <SavedViews key={prefKey} store={`${prefKey}:views`} filter={filter} list={list} onApply={(f,p)=>{onFilterChange(f);setList(p);writeList(prefKey,p);}}/>}
+      {mode === 'flat' ? <ManagementTable issues={data.issues} onOpen={onOpen} scope={`project:${projectKey}`} serverSort profile={list} onProfile={setList}/> : data.issues.length === 0 ? (
         <Empty text="没有符合条件的问题" />
       ) : (
         <table className="tree-table">

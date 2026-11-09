@@ -217,7 +217,7 @@ export function canWrite(me: Me | null, projectKey: string | null | undefined): 
 // 列表/看板需要的字段；开发人员 cf10204、测试人员 cf10401、产品经理 cf10400、影响版本 versions
 export const LIST_FIELDS = [
   'summary', 'status', 'issuetype', 'priority', 'assignee', 'components', 'updated', 'created',
-  'issuelinks', 'customfield_10204', 'customfield_10401', 'customfield_10400', 'versions',
+  'duedate', 'resolution', 'resolutiondate', 'issuelinks', 'customfield_10204', 'customfield_10401', 'customfield_10400', 'versions',
 ];
 
 const KEY_BATCH = 80;

@@ -12,6 +12,8 @@ import { useSession } from '../lib/session';
 import type { Issue } from '../lib/types';
 import { StatusPill, TypeBadge } from '../components/Badges';
 import { Empty, ErrorState, Loading } from '../components/States';
+import { StatisticPlans } from '../components/StatisticPlans';
+import { scopeKey } from '../lib/management';
 import { DailyImportDialog } from '../components/DailyImportDialog';
 
 type Panel = 'cards' | 'chart' | 'table';
@@ -64,13 +66,20 @@ const DEFAULTS: Settings = {
   filtersByProject: {},
 };
 
-function loadSettings(): Settings {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORE) || 'null');
-    return raw ? { ...DEFAULTS, ...raw } : DEFAULTS;
-  } catch {
-    return DEFAULTS;
+function normalizeSettings(value:unknown):Settings {
+  const x=value&&typeof value==='object'?value as Partial<Settings>:{};
+  const list=<T extends string>(v:unknown,allowed:T[],fallback:T[])=>Array.isArray(v)?v.filter((i):i is T=>typeof i==='string'&&allowed.includes(i as T)):fallback;
+  const filtersByProject:Settings['filtersByProject']={};
+  if(x.filtersByProject&&typeof x.filtersByProject==='object')for(const [key,v]of Object.entries(x.filtersByProject)) {
+    if(!v||typeof v!=='object')continue;
+    filtersByProject[key]={text:typeof v.text==='string'?v.text:'',stages:list(v.stages,['todo','design','dev','test','done','hold'],[]),priority:typeof v.priority==='string'?v.priority:'',component:typeof v.component==='string'?v.component:'',version:typeof v.version==='string'?v.version:'',extraJql:typeof v.extraJql==='string'?v.extraJql:''};
   }
+  const custom=x.custom&&/^\d{4}-\d{2}-\d{2}$/.test(x.custom.from)&&/^\d{4}-\d{2}-\d{2}$/.test(x.custom.to)&&x.custom.from<=x.custom.to?x.custom:DEFAULTS.custom;
+  return {...DEFAULTS,range:Object.hasOwn(RANGE_LABEL,String(x.range))?x.range!:DEFAULTS.range,custom,granularity:['day','week','month'].includes(String(x.granularity))?x.granularity!:'week',basis:Object.hasOwn(BASIS_LABEL,String(x.basis))?x.basis!:'devDone',measure:x.measure==='spent'?'spent':'estimate',who:x.who==='devOrAssignee'?'devOrAssignee':'dev',hoursPerDay:typeof x.hoursPerDay==='number'&&Number.isFinite(x.hoursPerDay)?Math.min(24,Math.max(1,x.hoursPerDay)):8,unit:x.unit==='d'?'d':'h',panels:list(x.panels,['cards','chart','table'],DEFAULTS.panels),columns:list(x.columns,['project','status','date','periods'],DEFAULTS.columns),types:list(x.types,['编码任务','BUG及数据问题','其他任务','需求'],[]),grouped:x.grouped!==false,excludeRequirementBugs:x.excludeRequirementBugs!==false,filtersByProject};
+}
+function loadSettings(): Settings {
+  try { return normalizeSettings(JSON.parse(localStorage.getItem(STORE) || 'null')); }
+  catch { return DEFAULTS; }
 }
 
 const PANEL_LABEL: Record<Panel, string> = { cards: '汇总卡片', chart: '趋势图', table: '明细表' };
@@ -137,14 +146,14 @@ async function fetchAll(jql: string, fields: string[], signal: AbortSignal): Pro
 }
 
 export function HoursView({ projectKey, onOpen }: { projectKey: string | null; onOpen: (key: string) => void }) {
-  const { version, me, bump } = useSession();
+  const { version, me, bump, toast } = useSession();
   const [importing, setImporting] = useState(false);
   const [s, setS] = useState<Settings>(loadSettings);
   const [showConfig, setShowConfig] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // 点「未填工时」卡片：表格只看没填工时的问题
   const [onlyMissing, setOnlyMissing] = useState(false);
-  useEffect(() => localStorage.setItem(STORE, JSON.stringify(s)), [s]);
+  useEffect(() => { try { localStorage.setItem(STORE, JSON.stringify(s)); } catch { toast('无法保存工时设置','error'); } }, [s, toast]);
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setS((x) => ({ ...x, [k]: v }));
   const toggleIn = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
@@ -213,6 +222,7 @@ export function HoursView({ projectKey, onOpen }: { projectKey: string | null; o
   return (
     <div className="hours">
       {importing && hf && <DailyImportDialog hourFields={hf} projectKey={projectKey} onClose={() => setImporting(false)} onCreated={() => bump()} />}
+      <StatisticPlans store={`wb.hourPlans.v1:${scopeKey(me.jiraBaseUrl,me.name,projectKey)}`} value={s} normalize={normalizeSettings} onApply={setS}/>
       <div className="hours-bar">
         <div className="check-group" role="group" aria-label="时间范围">
           {(Object.keys(RANGE_LABEL) as RangePreset[]).map((r) => (

@@ -7,9 +7,9 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 const token=process.env.WB_MCP_TOKEN;
 const url=new URL(process.env.WB_MCP_URL||'http://127.0.0.1:18787/mcp');
 if(!token||!['127.0.0.1','localhost','[::1]'].includes(url.hostname))throw new Error('请配置本机 WB_MCP_URL 和 WB_MCP_TOKEN');
-const client=new Client({name:'jira-workbench-stdio',version:'0.1.3'});
+const client=new Client({name:'jira-workbench-stdio',version:'0.1.4'});
 await client.connect(new StreamableHTTPClientTransport(url,{requestInit:{headers:{Authorization:`Bearer ${token}`}}}));
-const server=new Server({name:'jira-workbench',version:'0.1.3'},{capabilities:{tools:{}}});
+const server=new Server({name:'jira-workbench',version:'0.1.4'},{capabilities:{tools:{}}});
 server.setRequestHandler(ListToolsRequestSchema,()=>client.listTools());
 server.setRequestHandler(CallToolRequestSchema,({params})=>client.callTool(params));
 await server.connect(new StdioServerTransport());

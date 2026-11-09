@@ -5,6 +5,9 @@ describe('route', () => {
   it('解析项目、页面和问题', () => {
     expect(parseHash('#/AGENT/board?issue=AGENT-1')).toEqual({ project: 'AGENT', page: 'board', issue: 'AGENT-1' });
     expect(parseHash('#/AGENT')).toEqual({ project: 'AGENT', page: 'me', issue: null });
+    expect(parseHash('#/ALL/review')).toEqual({project:null,page:'review',issue:null});
+    expect(parseHash('#/ALL/notifications')).toEqual({project:null,page:'notifications',issue:null});
+    expect(parseHash('#/ALL/versions')).toEqual({project:null,page:'me',issue:null});
     expect(parseHash('#/ALL/hours')).toEqual({ project: null, page: 'hours', issue: null });
     // 全部项目下不能看需求树等项目页面
     expect(parseHash('#/ALL/tree')).toEqual({ project: null, page: 'me', issue: null });
