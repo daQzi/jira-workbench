@@ -740,3 +740,32 @@ span.edit-trigger { display: inline-block; min-width: 24px; }
 @keyframes request-slide { from { transform: translateX(-110%); } to { transform: translateX(380%); } }
 @keyframes request-pulse { 0%, 100% { opacity: .35; box-shadow: 0 0 0 0 rgba(226, 86, 31, .2); } 50% { opacity: 1; box-shadow: 0 0 0 4px rgba(226, 86, 31, 0); } }
 @media (prefers-reduced-motion: reduce) { .request-orbit::before, .request-top-progress i, .request-progress i, .request-pulse { animation-duration: 2.5s; } }
+
+/* ---------- 本地 MCP 服务 ---------- */
+.mcp-page { max-width: 1080px; margin: 0 auto; padding-bottom: 30px; }
+.mcp-hero { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 27px 30px; background: var(--navy); color: var(--card); border-radius: 12px; border: 1px solid #334862; position: relative; overflow: hidden; }
+.mcp-hero::after { content:''; width: 180px; height: 180px; border: 30px solid rgba(226,86,31,.12); border-radius: 50%; position: absolute; right: 110px; top: -120px; pointer-events: none; }
+.mcp-eyebrow { color: #bdc9d7; font-size: 11px; letter-spacing: .14em; }
+.mcp-hero h2 { font: 25px var(--font-display); margin: 8px 0; }
+.mcp-hero p { color: #c0cad6; margin: 0 0 15px; }
+.mcp-hero > .btn { white-space: nowrap; flex: none; }
+.mcp-service-state { display:inline-flex; align-items:center; gap:7px; color:#bbc5d0; font-size:12px; }
+.mcp-service-state i { width:7px; height:7px; border-radius:50%; background:#8996a6; }
+.mcp-service-state.on { color:#afe2c2; }.mcp-service-state.on i { background:#82cd9d; box-shadow:0 0 0 4px rgba(130,205,157,.1); }
+.mcp-tabs { display:flex; gap:22px; border-bottom:1px solid var(--line); margin:10px 0 18px; overflow:auto; }
+.mcp-tabs button { border:0; background:none; padding:14px 2px 11px; border-bottom:2px solid transparent; white-space:nowrap; color:var(--ink-2); }
+.mcp-tabs button[aria-selected='true'] { color:var(--accent); border-color:var(--accent); font-weight:600; }.mcp-tabs small { margin-left:7px; color:var(--ink-3); }
+.mcp-card { padding:22px 24px; border:1px solid var(--line); border-radius:9px; background:var(--card); margin-bottom:16px; box-shadow:var(--shadow); }
+.mcp-card h3 { margin:0 0 7px; font-size:15px; }.mcp-card p { margin:5px 0 14px; }.mcp-card > .btn { margin-top:15px; }
+.mcp-address { display:flex; align-items:center; justify-content:space-between; gap:10px; border:1px solid var(--line-2); border-radius:6px; padding:10px 12px; background:var(--paper); }
+.mcp-address code { font-family:var(--font-mono); word-break:break-all; }
+.mcp-facts { display:flex; gap:50px; margin-top:20px; }.mcp-facts span { display:flex; flex-direction:column; gap:5px; font-size:11px; color:var(--ink-3); }.mcp-facts strong { font-size:13px; color:var(--ink-2);font-weight:500; }
+.mcp-steps { list-style:decimal-leading-zero; padding-left:27px; margin:18px 0 0; }.mcp-steps li { padding:0 0 13px 5px;color:var(--accent); }.mcp-steps b { color:var(--ink); display:block;font-weight:500; }.mcp-steps span { color:var(--ink-3);font-size:12px; }
+.mcp-code { padding:14px; max-height:380px; overflow:auto; background:var(--paper);border:1px solid var(--line-2);border-radius:6px;font:12px/1.7 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere; }
+.mcp-secret { border-color:#dfad7a;background:#fff9ed; }.mcp-alert { padding:12px 15px;border:1px solid var(--line);background:var(--card);border-radius:6px;margin:0 0 15px; }
+.mcp-section-head { display:flex; align-items:center;justify-content:space-between;gap:10px; }.mcp-section-head h3 { margin:0; }
+.mcp-grant { display:flex;align-items:center;justify-content:space-between;gap:14px;border-top:1px solid var(--line-2);padding:16px 0 4px;margin-top:14px; }.mcp-grant p { font-size:12px;color:var(--ink-3);margin:5px 0; }
+.mcp-policy-builder { padding:15px;background:var(--paper);border-radius:7px;margin-top:14px;display:flex;flex-direction:column;gap:9px; }.mcp-policy-builder .input { width:100%;min-width:0; }.mcp-policy-fields { margin-top:18px; }
+.mcp-route-step { display:flex;align-items:center;justify-content:space-between;border:1px solid var(--line-2);padding:8px 12px;border-radius:5px;margin:5px 0; }.mcp-route-step b { color:var(--accent);margin:0 8px; }.mcp-route-step small { color:var(--ink-3);margin-left:10px; }
+.mcp-policy-check { display:flex;align-items:center;gap:7px;margin:15px 0; }.mcp-operation { border-top:1px solid var(--line-2);padding:16px 0 0;margin-top:15px; }.mcp-operation code { margin-left:10px;color:var(--ink-3); }
+@media(max-width:700px) { .mcp-hero { padding:20px;align-items:flex-start;flex-direction:column;gap:15px; }.mcp-card { padding:17px; }.mcp-facts { gap:20px;flex-wrap:wrap; }.mcp-grant { align-items:flex-start;flex-direction:column; }.mcp-tabs { gap:17px; } }

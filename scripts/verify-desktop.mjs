@@ -15,6 +15,7 @@ const runtime = mac ? path.join(root, 'node') : path.join(root, 'runtime', targe
 assert.ok(existsSync(runtime), '缺少内置 Node');
 assert.ok(existsSync(path.join(path.dirname(runtime), 'NODE-LICENSE.txt')), '缺少 Node 许可');
 assert.ok(existsSync(path.join(app, 'dist', 'index.html')), '缺少前端');
+assert.ok(existsSync(path.join(app, 'server', 'mcp-stdio.mjs')), '缺少 MCP stdio 桥接器');
 assert.deepEqual(readdirSync(app).sort(), (target.startsWith('win-') ? ['dist', 'icon.ico', 'package.json', 'server'] : ['dist', 'package.json', 'server']).sort());
 assert.ok(readdirSync(path.join(app, 'server')).every((f) => f.endsWith('.mjs') && !f.endsWith('.test.mjs')));
 
@@ -32,6 +33,8 @@ const source = `
     assert.equal(settings.llmModel, '');
     assert.equal(settings.llmKeySet, false);
     assert.equal((await fetch(url)).status, 200);
+    assert.equal((await fetch(url + '/mcp', { method: 'POST' })).status, 503);
+    assert.equal((await fetch(url + '/api/mcp/status')).status, 401);
     const login = await fetch(url + '/api/login', { method: 'POST', body: JSON.stringify({ username: 'test', password: 'test' }) });
     assert.equal(login.status, 400);
     assert.match(JSON.stringify(await login.json()), /连接设置/);

@@ -52,9 +52,15 @@ npm run dev:all     # 写模式，按 Jira 权限所有项目可写（会写真�
 - 版本按 Jira「影响版本」（`versions` / JQL `affectedVersion`）处理，本 Jira 的修复版本基本为空。列表有版本列；筛选栏有全部版本下拉（未发布/已发布/已归档分组，含「未设置版本」）和最近要发布的 3 个版本快捷按钮；工作台按手上问题涉及的版本出快捷按钮。见 `src/lib/versions.ts`。
 - 登录状态加密保存，重启后免登录（空闲 8 小时或 Jira 会话失效后仍需重新登录）。命令行模式存在项目下 `.wb-data/`（`WB_SESSION_DIR` 可改，`=off` 关闭），桌面版存在配置目录 `session/`；文件权限 0600，退出登录即删除。
 
+## 内置 MCP 服务
+
+侧栏「设置 → MCP 服务」管理启用/停用、Agent 授权、自动完成路线和执行记录。默认停用，仅本机可连。Agent 使用独立 Token 调用查询、新建、更新、流转、备注、附件及「每日工时创建并完成」；权限同时受授权项目、工作台写入范围和 Jira 权限限制。
+
+启用后在页面创建授权并复制一次性连接配置；自动完成前先按项目+类型配置真实流转路线。每日工作入口 `jira_submit_daily`，失败后 `jira_resume_operation` 复用已创建任务续跑。详见 [本地 MCP 使用说明](docs/local-mcp.md)。本机 SQLite 保存设置、授权摘要和操作步骤；桌面包内置 SDK 和 stdio 桥接器，随工作台启停。
+
 ## 轻量桌面版与 GitHub 自动打包
 
-沿用现有轻量方案，内置 Node 运行时 + 本地代理 + 编译后的前端，不打包 Electron 或 Chromium。打包脚本只复制 `dist/`、`server/*.mjs`（排除测试）和最小 package.json，不包含 `.env`、会话、个人配置或 node_modules；内置 Node 随包保留许可文件。
+沿用现有轻量方案，内置 Node 运行时 + 本地代理 + 编译后的前端，不打包 Electron 或 Chromium。打包脚本只复制 `dist/`、`server/*.mjs`（排除测试）、打包后的 MCP 服务/桥接器和最小 package.json，不包含 `.env`、会话、个人配置或 node_modules；内置 Node 随包保留许可文件。
 
 | 平台 | 产物 | 窗口与依赖 |
 | --- | --- | --- |

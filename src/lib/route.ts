@@ -1,7 +1,7 @@
 // 路由写在 hash 里：#/<项目|ALL>/<页面>?issue=KEY，刷新/分享可还原。
 // 当前项目是全局维度，所有页面都按它查询；ALL 表示跨项目（只有个人页面可用）。
-export type Page = 'me' | 'hours' | 'tree' | 'flat' | 'board';
-export const PAGES: Page[] = ['me', 'hours', 'tree', 'flat', 'board'];
+export type Page = 'me' | 'hours' | 'tree' | 'flat' | 'board' | 'mcp';
+export const PAGES: Page[] = ['me', 'hours', 'tree', 'flat', 'board', 'mcp'];
 /** 只能在具体项目下使用的页面 */
 export const PROJECT_PAGES: Page[] = ['tree', 'flat', 'board'];
 export const ALL = 'ALL';

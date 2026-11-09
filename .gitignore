@@ -11,3 +11,5 @@ release
 coverage
 playwright-report
 test-results
+
+.wb-build

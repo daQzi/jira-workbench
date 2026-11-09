@@ -2,6 +2,7 @@
 // 只监听 127.0.0.1；默认只读。写操作需 WB_ALLOW_WRITE=1，且只放行白名单写接口；
 // WB_WRITE_PROJECTS=AGENT,XXX 可把写操作限制在指定项目（验证阶段用）。不提供任何删除接口。
 import http from 'node:http';
+import { createMcpFeature } from './mcp.mjs';
 import { randomBytes } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -49,6 +50,7 @@ const READ_PREFIXES = [
 const sessions = new Map();
 /** 会话落盘（重启免登录）；未配置目录时只在内存 */
 let store = null;
+let mcp = null;
 let saveTimer = null;
 let lastSavedAt = 0;
 // lastSeen 每次请求都会变，最多每分钟落盘一次；登录/退出立即保存
@@ -415,6 +417,8 @@ async function serveStatic(res, url) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || HOST}`);
   try {
+    if (url.pathname === '/mcp') return await mcp.handle(req, res);
+    if (url.pathname.startsWith('/api/mcp/')) return await mcp.manage(req, res, url, getSession(req));
     if (url.pathname === '/api/login' && req.method === 'POST') return await handleLogin(req, res);
     if (url.pathname === '/api/logout' && req.method === 'POST') return await handleLogout(req, res);
     if (url.pathname === '/api/me' && req.method === 'GET') return await handleMe(req, res);
@@ -440,7 +444,7 @@ const server = http.createServer(async (req, res) => {
  * 启动代理。port=0 时由系统分配；返回实际监听的地址。
  * @param {{jiraBaseUrl: string, port?: number, allowWrite?: boolean, writeProjects?: string[], serveDist?: boolean, distDir?: string, llm?: object, sessionDir?: string, settingsFile?: string}} opts
  */
-export function startServer(opts) {
+export async function startServer(opts) {
   JIRA_BASE_URL = jiraOrDefault(opts.jiraBaseUrl);
   SETTINGS_FILE = opts.settingsFile || null;
   LLM_OPTS = { ...(opts.llm || {}) };
@@ -455,6 +459,31 @@ export function startServer(opts) {
   sessions.clear();
   store = opts.sessionDir ? createSessionStore(opts.sessionDir) : null;
   if (store) for (const [sid, s] of store.load(SESSION_IDLE_MS)) sessions.set(sid, s);
+  await mcp?.close();
+  mcp = createMcpFeature({
+    dir: SETTINGS_FILE ? path.dirname(SETTINGS_FILE) : opts.sessionDir,
+    getBaseUrl: () => JIRA_BASE_URL,
+    getWritePolicy: () => ({ allowWrite: ALLOW_WRITE, writeProjects: WRITE_PROJECTS }),
+    getSession: (sid) => getSession({ headers: { cookie: `wb_sid=${sid}` } }),
+    readBody, sendJson,
+    jira: async (session, method, sub, body) => {
+      if (method !== 'GET') {
+        const payload = body instanceof FormData ? null : body;
+        const denied = checkWritePolicy({ allowWrite: ALLOW_WRITE, writeProjects: WRITE_PROJECTS }, method, sub, payload);
+        if (denied) throw Object.assign(new Error(denied.msg), { status: denied.status, code: 'FORBIDDEN' });
+      }
+      const upload = body instanceof FormData;
+      const r = await jiraFetch(session.cookies, `/rest/api/2/${sub}`, {
+        method,
+        headers: upload ? { 'X-Atlassian-Token': 'nocheck' } : body !== undefined ? { 'Content-Type': 'application/json' } : {},
+        ...(body !== undefined ? { body: upload ? body : JSON.stringify(body) } : {}),
+      });
+      const result = r.status === 204 ? null : await r.json().catch(() => { throw Object.assign(new Error('Jira 返回非 JSON 响应'), { status: 502 }); });
+      if (r.status === 401) dropSession(session.sid);
+      if (!r.ok) throw Object.assign(new Error([...(result?.errorMessages || []), ...Object.values(result?.errors || {})].join('；') || `Jira HTTP ${r.status}`), { status: r.status, code: r.status === 401 ? 'AUTH_REQUIRED' : 'JIRA_ERROR' });
+      return result;
+    },
+  });
   return new Promise((resolve, reject) => {
     const onError = (e) => reject(e);
     server.once('error', onError);
@@ -471,7 +500,7 @@ export function startServer(opts) {
 
 export function stopServer() {
   if (saveTimer) persistSessions(true);
-  return new Promise((resolve) => (server.listening ? server.close(() => resolve()) : resolve()));
+  return new Promise((resolve) => (server.listening ? server.close(async () => { await mcp?.close(); mcp = null; resolve(); }) : resolve()));
 }
 
 /** 大模型配置的环境变量（命令行模式）；Key 不写进代码和配置模板 */

@@ -1,3 +1,4 @@
+import type { McpGrant, McpPolicy, McpStatus } from './mcpTypes';
 import { trackRequest } from './requestActivity';
 import type { Attachment, FieldDef, Issue, IssueDetail, JiraUser, Project, ProjectDetail, SearchResult, NamedRef } from './types';
 import type { FieldMetaMap } from './fields';
@@ -100,6 +101,12 @@ export interface Transition {
 const enc = encodeURIComponent;
 
 export const api = {
+  checkMcp: () => request<{enabled:boolean;user:string;tools:number;url:string}>('POST', '/api/mcp/check', {}),
+  mcpStatus: () => request<McpStatus>('GET', '/api/mcp/status'),
+  saveMcpSettings: (s: { enabled: boolean; policies: McpPolicy[] }) => request<McpStatus>('PUT', '/api/mcp/settings', s),
+  createMcpGrant: (input: {name:string;projects:string[];access:'read'|'write';attachmentRoots:string[]}) => request<{grant:McpGrant;token:string;url:string}>('POST', '/api/mcp/grants', input),
+  updateMcpGrant: (id:string, input:{enabled?:boolean;rebind?:boolean}) => request<McpStatus>('PUT', `/api/mcp/grants/${enc(id)}`, input),
+  revokeMcpGrant: (id:string) => request<McpStatus>('DELETE', `/api/mcp/grants/${enc(id)}`),
   login: (username: string, password: string) => writeOnce('login', () => request<{ name: string }>('POST', '/api/login', { username, password })),
   logout: () => request<{ ok: boolean }>('POST', '/api/logout'),
   me: () => request<Me>('GET', '/api/me'),

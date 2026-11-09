@@ -8,6 +8,7 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     proxy: {
+      '/mcp': 'http://127.0.0.1:8787',
       '/api': 'http://127.0.0.1:8787',
     },
   },

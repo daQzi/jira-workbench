@@ -11,6 +11,7 @@ import { ErrorState, Loading } from './components/States';
 import { TreeView } from './views/TreeView';
 import { BoardView } from './views/BoardView';
 import { MyWorkView } from './views/MyWorkView';
+import { McpView } from './views/McpView';
 import { HoursView } from './views/HoursView';
 import { TypeBadge } from './components/Badges';
 import { loadFilter, saveFilter } from './lib/filterPrefs';
@@ -74,10 +75,11 @@ export function App() {
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
-const PAGE_LABEL: Record<Page, string> = { me: '我的工作台', hours: '我的工时', tree: '需求树', flat: '全部问题', board: '看板' };
+const PAGE_LABEL: Record<Page, string> = { me: '我的工作台', hours: '我的工时', tree: '需求树', flat: '全部问题', board: '看板', mcp: 'MCP 服务' };
 const NAV: { label: string; pages: Page[] }[] = [
   { label: '个人', pages: ['me', 'hours'] },
   { label: '项目', pages: ['tree', 'flat', 'board'] },
+  { label: '设置', pages: ['mcp'] },
 ];
 
 function Workspace({ onLogout }: { onLogout: () => void }) {
@@ -116,7 +118,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
 
   // 快捷键 C：新建（输入框内不触发）
   useEffect(() => {
-    if (!writable) return;
+    if (!writable || route.page === 'mcp') return;
     const on = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (e.key !== 'c' || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -207,13 +209,13 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           <div className="title-block">
             <h1>{PAGE_LABEL[route.page]}</h1>
             <div className="sub">
-              <span className="scope-tag">{scopeText}</span>
+              <span className="scope-tag">{route.page === 'mcp' ? '本机设置' : scopeText}</span>
               {route.page === 'me' && '我负责、开发或测试的未结束问题'}
               {route.page === 'hours' && '开发人员是我的问题，按时间统计（按父需求分组）'}
               {projectPage && '父子关系按「子项 blocks 需求」识别'}
             </div>
           </div>
-          {!projectPage && writable && (
+          {!projectPage && route.page !== 'mcp' && writable && (
             <div className="topbar-actions">
               <NewButton onCreate={createIn} />
             </div>
@@ -247,6 +249,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         )}
 
         <div className="content" style={projectPage ? undefined : { paddingTop: 16 }}>
+          {route.page === 'mcp' && <McpView />}
           {route.page === 'me' && <MyWorkView projectKey={pk} onOpen={openIssue} />}
           {route.page === 'hours' && <HoursView projectKey={pk} onOpen={openIssue} />}
           {projectPage && pk && project.error && <ErrorState error={project.error} onRetry={project.reload} />}

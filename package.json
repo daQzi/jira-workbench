@@ -19,17 +19,25 @@
     "smoke:v3": "node scripts/smoke-v3.mjs",
     "dev:write": "WB_ALLOW_WRITE=1 WB_WRITE_PROJECTS=AGENT node scripts/dev.mjs",
     "dev:all": "WB_ALLOW_WRITE=1 node scripts/dev.mjs",
-    "desktop": "node scripts/build-desktop.mjs"
+    "desktop": "node scripts/build-desktop.mjs",
+    "pretest": "node scripts/build-server.mjs",
+    "predev": "node scripts/build-server.mjs",
+    "preserver": "node scripts/build-server.mjs",
+    "prestart": "node scripts/build-server.mjs",
+    "prebuild": "node scripts/build-server.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
+    "esbuild": "0.28.2",
     "typescript": "5.9.3",
     "vite": "8.3.5",
     "vitest": "4.1.12"

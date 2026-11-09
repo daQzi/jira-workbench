@@ -49,11 +49,13 @@ var sums = null;
 
 /** 应用本体：server（不含测试）+ dist + ESM 标记 */
 function copyApp(dest) {
+  run(process.execPath, ['scripts/build-server.mjs']);
   mkdirSync(path.join(dest, 'server'), { recursive: true });
   cpSync(path.join(ROOT, 'dist'), path.join(dest, 'dist'), { recursive: true });
   for (const f of readdirSync(path.join(ROOT, 'server'))) {
     if (f.endsWith('.mjs') && !f.endsWith('.test.mjs')) cpSync(path.join(ROOT, 'server', f), path.join(dest, 'server', f));
   }
+  run(process.execPath, ['scripts/build-server.mjs', path.join(dest, 'server')]);
   writeFileSync(path.join(dest, 'package.json'), JSON.stringify({ type: 'module', private: true, version: pkg.version }) + '\n');
 }
 
