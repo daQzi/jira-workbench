@@ -86,7 +86,7 @@ export function createMcpFeature({dir,jira,getSession,getBaseUrl,getWritePolicy,
       if(!g)return sendJson(res,401,{errorMessages:['缺少或无效的 Agent Token'],code:'UNAUTHORIZED'});
       try {check(g);}catch(e){return replyError(res,e);}
       if(req.method!=='POST')return sendJson(res,405,{errorMessages:['该无状态 MCP 入口仅使用 POST']},{Allow:'POST'});
-      const sdk=new McpServer({name:'jira-workbench',version:'0.1.2'},{maxToolInputElements:5000});
+      const sdk=new McpServer({name:'jira-workbench',version:'0.1.3'},{maxToolInputElements:5000});
       for(const t of toolDefinitions) {
         if(g.access==='read'&&!t.readOnly)continue;
         sdk.registerTool(t.name,{description:t.description,inputSchema:t.schema,annotations:{readOnlyHint:t.readOnly,destructiveHint:false,idempotentHint:true,openWorldHint:true}},async input=>{
