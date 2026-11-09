@@ -230,6 +230,7 @@ export function CreateDialog({ target: initial, onClose, onCreated }: Props) {
     <Modal
       title={title}
       onClose={onClose}
+      busy={busy}
       width={760}
       footer={
         type && (

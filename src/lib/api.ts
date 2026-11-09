@@ -1,3 +1,4 @@
+import { trackRequest } from './requestActivity';
 import type { Attachment, FieldDef, Issue, IssueDetail, JiraUser, Project, ProjectDetail, SearchResult, NamedRef } from './types';
 import type { FieldMetaMap } from './fields';
 import type { LinkTypeDef } from './links';
@@ -25,13 +26,13 @@ function messageOf(body: unknown, status: number): string {
 }
 
 async function request<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, {
+  const res = await trackRequest(() => fetch(url, {
     method,
     credentials: 'same-origin',
     headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
-  });
+  }), method !== 'GET');
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
     if (res.status === 401 && !url.startsWith('/api/login')) onUnauthorized?.();
@@ -41,7 +42,19 @@ async function request<T>(method: string, url: string, body?: unknown, signal?: 
 }
 
 const jira = <T>(path: string, signal?: AbortSignal) => request<T>('GET', `/api/jira/${path}`, undefined, signal);
-const jiraWrite = <T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown) => request<T>(method, `/api/jira/${path}`, body);
+// 相同参数、仍未结束的写请求共享同一个 Promise，避免连点或 Enter/点击并发重复写入。
+// 请求结束即删除记录；失败仍会由每个调用方正常收到，不吞错，也不会永久禁止重试。
+const pendingWrites = new Map<string, Promise<unknown>>();
+function writeOnce<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const pending = pendingWrites.get(key);
+  if (pending) return pending as Promise<T>;
+  const promise = run().finally(() => pendingWrites.delete(key));
+  pendingWrites.set(key, promise);
+  return promise;
+}
+
+const jiraWrite = <T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown) =>
+  writeOnce(`${method}:${path}:${JSON.stringify(body)}`, () => request<T>(method, `/api/jira/${path}`, body));
 
 export interface Me {
   name: string;
@@ -87,11 +100,11 @@ export interface Transition {
 const enc = encodeURIComponent;
 
 export const api = {
-  login: (username: string, password: string) => request<{ name: string }>('POST', '/api/login', { username, password }),
+  login: (username: string, password: string) => writeOnce('login', () => request<{ name: string }>('POST', '/api/login', { username, password })),
   logout: () => request<{ ok: boolean }>('POST', '/api/logout'),
   me: () => request<Me>('GET', '/api/me'),
   settings: () => request<ConnSettings>('GET', '/api/settings'),
-  saveSettings: (input: ConnSettingsInput) => request<ConnSettings>('PUT', '/api/settings', input),
+  saveSettings: (input: ConnSettingsInput) => writeOnce(`settings:${JSON.stringify(input)}`, () => request<ConnSettings>('PUT', '/api/settings', input)),
 
   projects: () => jira<Project[]>('project'),
   project: (key: string) => jira<ProjectDetail>(`project/${encodeURIComponent(key)}`),
@@ -163,19 +176,22 @@ export const api = {
 
   /** 日报交给大模型拆成任务草稿（经本地代理，Key 不进浏览器） */
   llmSplit: (body: { text: string; date: string; defaultProject: string; projects: string[] }) =>
-    request<{ tasks: LlmTask[]; model: string; elapsedMs: number }>('POST', '/api/llm/split', body),
+    writeOnce(`llm:${JSON.stringify(body)}`, () => request<{ tasks: LlmTask[]; model: string; elapsedMs: number }>('POST', '/api/llm/split', body)),
 
   /** 上传附件（multipart，字段名必须是 file） */
-  async uploadAttachments(key: string, files: File[]): Promise<Attachment[]> {
-    const fd = new FormData();
-    for (const f of files) fd.append('file', f, f.name);
-    const res = await fetch(`/api/jira/issue/${enc(key)}/attachments`, { method: 'POST', credentials: 'same-origin', body: fd });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      if (res.status === 401) onUnauthorized?.();
-      throw new ApiError(res.status, messageOf(data, res.status));
-    }
-    return data as Attachment[];
+  uploadAttachments(key: string, files: File[]): Promise<Attachment[]> {
+    const signature = files.map((f) => `${f.name}:${f.size}:${f.lastModified}`).join(',');
+    return writeOnce(`upload:${key}:${signature}`, () => trackRequest(async () => {
+      const fd = new FormData();
+      for (const f of files) fd.append('file', f, f.name);
+      const res = await fetch(`/api/jira/issue/${enc(key)}/attachments`, { method: 'POST', credentials: 'same-origin', body: fd });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (res.status === 401) onUnauthorized?.();
+        throw new ApiError(res.status, messageOf(data, res.status));
+      }
+      return data as Attachment[];
+    }, true));
   },
 };
 

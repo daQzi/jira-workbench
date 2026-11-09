@@ -288,11 +288,11 @@ export function DailyImportDialog({ hourFields, projectKey = null, onClose, onCr
   );
 
   return (
-    <Modal title="从日报新建任务" onClose={busy ? () => {} : onClose} width={980} footer={footer}>
+    <Modal title="从日报新建任务" busy={busy || parsing} onClose={onClose} width={980} footer={footer}>
       <div className="daily-opts">
         <label>
           <span>日报日期</span>
-          <input className="input" type="date" value={date} disabled={!!tasks} onChange={(e) => e.target.value && setDate(e.target.value)} />
+          <input className="input" type="date" value={date} disabled={!!tasks || parsing} onChange={(e) => e.target.value && setDate(e.target.value)} />
         </label>
         {projectKey ? (
           <label>
@@ -302,7 +302,7 @@ export function DailyImportDialog({ hourFields, projectKey = null, onClose, onCr
         ) : (
         <label>
           <span>默认项目</span>
-          <select className="select" value={prefs.defaultProject} disabled={!!tasks} onChange={(e) => setPref('defaultProject', e.target.value)}>
+          <select className="select" value={prefs.defaultProject} disabled={!!tasks || parsing} onChange={(e) => setPref('defaultProject', e.target.value)}>
             {projects === null && <option value="">加载中…</option>}
             {projects?.length === 0 && <option value="">没有可写项目</option>}
             {projects?.map((p) => (
@@ -315,7 +315,7 @@ export function DailyImportDialog({ hourFields, projectKey = null, onClose, onCr
         )}
         <label>
           <span>问题类型</span>
-          <select className="select" value={prefs.typeName} disabled={busy} onChange={(e) => setPref('typeName', e.target.value)}>
+          <select className="select" value={prefs.typeName} disabled={busy || parsing} onChange={(e) => setPref('typeName', e.target.value)}>
             {CHILD_TYPES.map((t) => (
               <option key={t}>{t}</option>
             ))}
@@ -323,11 +323,11 @@ export function DailyImportDialog({ hourFields, projectKey = null, onClose, onCr
         </label>
         <label>
           <span>单条上限（h）</span>
-          <input className="input" type="number" min={1} max={24} step={0.5} value={prefs.maxHours} disabled={!!tasks} onChange={(e) => setPref('maxHours', Math.min(24, Math.max(1, Number(e.target.value) || 8)))} />
+          <input className="input" type="number" min={1} max={24} step={0.5} value={prefs.maxHours} disabled={!!tasks || parsing} onChange={(e) => setPref('maxHours', Math.min(24, Math.max(1, Number(e.target.value) || 8)))} />
         </label>
         <label>
           <span>拆出的多条</span>
-          <select className="select" value={prefs.schedule} disabled={!!tasks} onChange={(e) => setPref('schedule', e.target.value as Prefs['schedule'])}>
+          <select className="select" value={prefs.schedule} disabled={!!tasks || parsing} onChange={(e) => setPref('schedule', e.target.value as Prefs['schedule'])}>
             <option value="backward">往前排工作日（截止日报当天）</option>
             <option value="forward">往后排工作日（从日报当天起）</option>
           </select>
@@ -335,10 +335,10 @@ export function DailyImportDialog({ hourFields, projectKey = null, onClose, onCr
         <label className="daily-llm" title={llm ? `模型 ${llm.model}` : '代理未配置大模型（见 README）'}>
           <span>拆分方式</span>
           <span className="check-group">
-            <button type="button" className="chip" aria-pressed={!!llm && prefs.useLlm} disabled={!llm || !!tasks} onClick={() => setPref('useLlm', true)}>
+            <button type="button" className="chip" aria-pressed={!!llm && prefs.useLlm} disabled={!llm || !!tasks || parsing} onClick={() => setPref('useLlm', true)}>
               大模型{llm ? '' : '（未配置）'}
             </button>
-            <button type="button" className="chip" aria-pressed={!llm || !prefs.useLlm} disabled={!!tasks} onClick={() => setPref('useLlm', false)}>
+            <button type="button" className="chip" aria-pressed={!llm || !prefs.useLlm} disabled={!!tasks || parsing} onClick={() => setPref('useLlm', false)}>
               规则
             </button>
           </span>

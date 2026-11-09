@@ -84,6 +84,7 @@ export function TransitionDialog({ issueKey, summary, fromStatus, transition, cu
         </>
       }
       onClose={onClose}
+      busy={busy}
       width={560}
       footer={
         <>
