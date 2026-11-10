@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSession } from '../lib/session';
 import type { Issue } from '../lib/types';
 import { NO_VERSION, versionNames } from '../lib/versions';
@@ -13,18 +13,33 @@ import { useManagementData } from '../lib/useManagementData';
 import { relativeTime } from '../lib/format';
 import { CARD_LIMIT, CARD_TEMPLATES, cardFromLegacy, cardSummary, defaultCards, needsProjectIssues, newCard, selectCardIssues, validCards, validLegacyViews, type WorkCard } from '../lib/workCards';
 
-export function MyWorkView(props: { projectKey: string | null; onOpen: (key: string) => void }) {
+interface WorkbenchProps {
+  projectKey: string | null;
+  onOpen: (key: string) => void;
+  cardId: string | null;
+  onCardChange: (id: string | null) => void;
+}
+export function MyWorkView(props: WorkbenchProps) {
   const { me } = useSession();
   return <CardWorkbench key={scopeKey(me.jiraBaseUrl, me.name, props.projectKey)} {...props}/>;
 }
-function CardWorkbench({ projectKey, onOpen }: { projectKey: string | null; onOpen: (key: string) => void }) {
+function CardWorkbench({ projectKey, onOpen, cardId: allId, onCardChange }: WorkbenchProps) {
   const { me, toast } = useSession();
   const store = `wb.workCards.v2:${scopeKey(me.jiraBaseUrl, me.name, null)}`;
   const legacyStore = `wb.workCards.v1:${scopeKey(me.jiraBaseUrl, me.name, null)}`;
   const [cards, setCards] = useState(() => loadLocal(store, loadLocal(legacyStore, defaultCards(), validCards), validCards));
   const [library, setLibrary] = useState(false);
   const [editor, setEditor] = useState<WorkCard | null>(null);
-  const [allId, setAllId] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const scrollStore = `wb.workbench.scroll.v1:${scopeKey(me.jiraBaseUrl, me.name, projectKey)}`;
+  const [initialScroll] = useState(() => {
+    if (!allId) return 0;
+    try { const top = Number(sessionStorage.getItem(scrollStore)); return Number.isFinite(top) && top > 0 ? top : 0; }
+    catch { return 0; }
+  });
+  const gridScroll = useRef(initialScroll);
+  const previousCard = useRef(allId);
+  const currentCard = useRef(allId); currentCard.current = allId;
   const [resizing, setResizing] = useState<{ id: string; width: WorkCard['width']; height?: number } | null>(null);
   const dragId = useRef<string | null>(null);
   const resizeRef = useRef<{ id: string; x: number; y: number; width: number; height: number; colWidth: number } | null>(null);
@@ -91,13 +106,47 @@ function CardWorkbench({ projectKey, onOpen }: { projectKey: string | null; onOp
   }, [resizing?.id]);
 
   const all = cards.find(c => c.id === allId);
+  const dataReady = !!data.data;
+  useEffect(() => {
+    if (allId && !all) {
+      toast('该卡片在本机不存在，已返回工作台');
+      onCardChange(null);
+    }
+  }, [allId, all, onCardChange, toast]);
+  useEffect(() => {
+    const content = rootRef.current?.closest('.content');
+    if (!content) return;
+    const remember = () => { if (!currentCard.current) gridScroll.current = content.scrollTop; };
+    content.addEventListener('scroll', remember, { passive: true });
+    return () => content.removeEventListener('scroll', remember);
+  }, []);
+  useLayoutEffect(() => {
+    const content = rootRef.current?.closest('.content');
+    if (!content || (!allId && !dataReady)) return;
+    if (allId) {
+      try { sessionStorage.setItem(scrollStore, String(gridScroll.current)); } catch { /* 会话记忆不可用时仍支持本次页面内返回 */ }
+    }
+    content.scrollTop = allId ? 0 : gridScroll.current;
+    if (!allId && previousCard.current) {
+      const origin = [...rootRef.current!.querySelectorAll<HTMLButtonElement>('[data-card-open]')].find(button => button.dataset.cardOpen === previousCard.current);
+      origin?.focus({ preventScroll: true });
+    }
+    previousCard.current = allId;
+  }, [allId, scrollStore, dataReady]);
+  function openCard(id: string) {
+    // 默认卡片的 ID 首次生成后也要落盘，否则刷新列表链接时会找不到原卡片。
+    if (!persist(cards)) return;
+    gridScroll.current = rootRef.current?.closest('.content')?.scrollTop ?? 0;
+    onCardChange(id);
+  }
   const hf = data.data?.hourFields;
   const listFor = (c: WorkCard) => hf ? selectCardIssues(issues, c, hf, me.name) : [];
 
-  return <div className="card-workbench">
+  return <div className="card-workbench" ref={rootRef}>
+    {all && <nav className="workbench-list-nav" aria-label="卡片列表导航"><button className="workbench-back" onClick={() => onCardChange(null)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 5-7 7 7 7M5 12h14"/></svg><span>返回工作台</span></button></nav>}
     <div className="workspace-intro"><div><h2>{all ? all.title : '把常看的任务清单，贴在这里。'}</h2><p>{all ? cardSummary(all) : '拖动标题调整位置，拖右下角调整大小，松手自动保存。'}</p></div><div className="workbench-actions">
       <button className="btn" disabled={data.loading} onClick={data.reload}>{data.loading ? '刷新中…' : '刷新'}</button>
-      {all ? <><button className="btn" onClick={() => setEditor(all)}>编辑条件</button><button className="btn" onClick={() => setAllId(null)}>返回卡片工作台</button></> : <button className="btn primary" disabled={atLimit} onClick={() => setLibrary(true)}>＋ 添加卡片</button>}
+      {all ? <button className="btn" onClick={() => setEditor(all)}>编辑条件</button> : <button className="btn primary" disabled={atLimit} onClick={() => setLibrary(true)}>＋ 添加卡片</button>}
     </div></div>
     {data.error && !data.data && <ErrorState error={data.error} onRetry={data.reload}/>}
     {data.data && <div className="workbench-context"><span><i className={`workbench-sync-dot${data.data.backgroundLoading ? ' active' : ''}`}/>{everyone ? '项目内所有人' : '与我相关'} · 未解决事项及近30天解决事项</span><span>{cards.length} / {CARD_LIMIT} 张卡片</span></div>}
@@ -105,11 +154,13 @@ function CardWorkbench({ projectKey, onOpen }: { projectKey: string | null; onOp
     {data.data?.provisional && data.data.issues.length > 0 && !data.data.backgroundLoading && <div className="management-notice">当前卡片基于首批或临时数据，最终统计仍在补全，请稍后刷新核对。</div>}
     {data.data?.error && <div className="management-notice" role="alert">{data.data.error.message} 当前结果可能不完整或不是最新，统计与导出以页面显示范围为准。<button className="btn small" onClick={data.reload}>重试同步</button></div>}
     {data.data && !data.data.backgroundLoading && data.data.total > issues.length && <div className="management-notice" role="status">共 {data.data.total} 项，当前仅加载前 {issues.length} 项；卡片数量、筛选与导出基于已加载结果。请在左上角选择具体项目缩小范围。</div>}
-    {!data.data ? !data.error && <Loading rows={6}/> : all ? <>
+    {!data.data ? !data.error && <Loading rows={6}/> : <>
+    {all && <>
       {all.view === 'blocked' && <div className="management-notice">仅显示未完成的入向 Blocks 依赖；需求下子项的父子链接不视为阻塞。</div>}
       {all.view === 'missing' && <div className="management-notice">检查开发人员、开发预估时间、开发完成/解决日期；未结束任务也可能缺完成日期。</div>}
       <ManagementTable key={all.id} issues={data.data?.error ? [] : listFor(all)} onOpen={onOpen} scope={`work-card:${projectKey ?? '*'}:${all.id}`} onChanged={data.reload}/>
-    </> : <div className="workbench-grid" aria-busy={data.loading}>
+    </>}
+    <div hidden={!!all}><div className="workbench-grid" aria-busy={data.loading}>
       {cards.map((c, index) => {
         const list = listFor(c), visible = list.slice(0, c.limit), size = resizing?.id === c.id ? resizing : c;
         return <section className={`workbench-card${size.width === 4 ? ' wide' : ''}${size.height ? ' fixed-height' : ''}${resizing?.id === c.id ? ' resizing' : ''}`} key={c.id} aria-label={c.title} data-card-id={c.id} style={{ gridColumn: size.width === 4 ? '1/-1' : `span ${size.width}`, height: size.height }}
@@ -122,7 +173,7 @@ function CardWorkbench({ projectKey, onOpen }: { projectKey: string | null; onOp
             <button className="btn small ghost" data-no-drag aria-label={`配置${c.title}`} onClick={() => setEditor(c)}>配置</button>
           </header>
           <div className="workbench-card-items">{visible.map(i => <div className="workbench-task" key={i.key}><button className="workbench-task-open" onClick={() => onOpen(i.key)}><span className="workbench-task-title"><TypeBadge type={i.fields.issuetype.name}/><span>{i.fields.summary}</span></span><span className="workbench-task-meta"><span className="mono">{i.key}</span><StatusPill status={i.fields.status.name}/>{dueDate(i) && !finished(i) ? <span className={overdue(i) ? 'err' : ''}>{overdue(i) ? '已逾期 · ' : '到期 '}{dueDate(i)}</span> : <span>{relativeTime(i.fields.updated)}</span>}</span></button><CopyIssueButton issueKey={i.key} summary={i.fields.summary} className="workbench-copy"/></div>)}{!list.length && <div className="workbench-empty"><span aria-hidden="true">✓</span> 当前清单已清空</div>}</div>
-          <footer className="workbench-card-foot"><span>显示 {visible.length} / {list.length} 条</span><div><button className="btn small ghost" onClick={() => setAllId(c.id)}>查看全部 →</button></div></footer>
+          <footer className="workbench-card-foot"><span>显示 {visible.length} / {list.length} 条</span><div><button className="btn small ghost" data-card-open={c.id} onClick={() => openCard(c.id)}>查看全部 →</button></div></footer>
           <button className="workbench-resize-handle" aria-label={`拖拽调整${c.title}大小，方向键也可调整`} onPointerDown={event => {
             if (event.button !== 0 || window.innerWidth < 1100 || resizing) return;
             event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId);
@@ -141,7 +192,7 @@ function CardWorkbench({ projectKey, onOpen }: { projectKey: string | null; onOp
         </section>;
       })}
       <button className="workbench-add" disabled={atLimit} onClick={() => setLibrary(true)}><strong>＋ 再贴一张常用清单</strong><span>{atLimit ? `已达 ${CARD_LIMIT} 张上限` : '内置卡片 / 已保存视图 / 自定义条件'}</span></button>
-    </div>}
+    </div></div></>}
     {library && <Modal title="添加到工作台" onClose={() => setLibrary(false)} width={740}>
       <div className="workbench-library">{CARD_TEMPLATES.map(t => <button key={t.name} className="workbench-template" onClick={() => { if (persist([...cards, newCard({ ...t.patch, title: t.name, custom: false })])) setLibrary(false); }}><strong>{t.name}</strong><span>{t.hint}</span></button>)}<button className="workbench-template custom" onClick={() => { setLibrary(false); setEditor(newCard()); }}><strong>＋ 自定义筛选卡片</strong><span>选择人员、类型、状态、版本和日期等条件</span></button></div>
       <h4>从已保存的工作视图添加</h4>{savedViews.length ? <div className="workbench-library">{savedViews.map(v => <button key={v.id} className="workbench-template" onClick={() => { if (persist([...cards, cardFromLegacy(v)])) setLibrary(false); }}><strong>{v.name}</strong><span>沿用原工作台保存的条件</span></button>)}</div> : <p className="muted">当前项目没有旧版已保存工作视图。你可以新建自定义卡片，条件会随卡片保存。</p>}

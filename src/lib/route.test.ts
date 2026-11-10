@@ -34,6 +34,21 @@ describe('route', () => {
     expect(toHash({ project: 'AGENT', page: 'board', issue: null, tab: 'review' })).toBe('#/AGENT/board');
   });
 
+  it('卡片列表地址保留项目和问题详情，支持刷新还原', () => {
+    const route = { project: 'AGENT', page: 'me' as const, card: 'card/开发', issue: 'AGENT-1' };
+    expect(parseHash(toHash(route))).toEqual(route);
+    expect(parseHash('#/ALL/me?card=todo')).toEqual({ project: null, page: 'me', issue: null, card: 'todo' });
+    expect(parseHash('#/me?card=todo')).toEqual({ project: undefined, page: 'me', issue: null, card: 'todo' });
+    expect(toHash({ ...route, card: null, issue: null })).toBe('#/AGENT/me');
+  });
+
+  it('卡片参数只作用于工作台，不带入其他页面', () => {
+    expect(parseHash('#/AGENT/board?card=todo')).toEqual({ project: 'AGENT', page: 'board', issue: null });
+    expect(parseHash('#/ALL/board?card=todo')).toEqual({ project: null, page: 'me', issue: null });
+    expect(toHash({ project: 'AGENT', page: 'hours', issue: null, card: 'todo', tab: 'review' })).toBe('#/AGENT/hours?tab=review');
+    expect(toHash({ project: null, page: 'board', issue: null, card: 'todo' })).toBe('#/ALL/me');
+  });
+
   it('上次项目：不记 ALL；选择顺序', () => {
     const m = new Map<string, string>();
     const kv = { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) };

@@ -24,6 +24,9 @@ import { ProjectSwitcher } from './components/ProjectSwitcher';
 import { isValidVersion } from './lib/versions';
 import { loadLastProject, parseHash, pickProject, PROJECT_PAGES, saveLastProject, toHash, type Page, type Route } from './lib/route';
 
+interface BackTarget { hash: string; steps: number }
+interface NavigationHistory { workbench?: BackTarget; cardList?: BackTarget }
+
 function useRoute(): [Route, (patch: Partial<Route>) => void] {
   const [route, setRoute] = useState(() => parseHash(location.hash));
   useEffect(() => {
@@ -36,15 +39,39 @@ function useRoute(): [Route, (patch: Partial<Route>) => void] {
     };
     on();
     window.addEventListener('hashchange', on);
-    return () => window.removeEventListener('hashchange', on);
+    window.addEventListener('popstate', on);
+    return () => { window.removeEventListener('hashchange', on); window.removeEventListener('popstate', on); };
   }, []);
   const update = useCallback((patch: Partial<Route>) => {
     const cur = parseHash(location.hash);
     const next = { ...cur, ...patch };
-    const hash = toHash({ project: next.project ?? null, page: next.page, issue: next.issue, tab: next.tab });
+    const hash = toHash({ ...next, project: next.project ?? null });
+    if (hash === location.hash) return;
+    const previous: NavigationHistory = history.state ?? {};
+    const sameWorkbench = cur.page === 'me' && next.page === 'me' && cur.project === next.project;
+    const closingCard = sameWorkbench && !!cur.card && !next.card && !next.issue;
+    const closingCardIssue = sameWorkbench && !!cur.card && cur.card === next.card && !!cur.issue && !next.issue;
+    const back = closingCard ? previous.workbench : closingCardIssue ? previous.cardList : undefined;
+    // 只回到由本页记录的入口，直接打开的链接使用 replace，避免返回到站外或形成返回循环。
+    if (back?.hash === hash && Number.isSafeInteger(back.steps) && back.steps > 0) {
+      history.go(-back.steps);
+      return;
+    }
+    const replace = cur.project === undefined || closingCard || closingCardIssue;
+    const state: NavigationHistory = {};
+    if (sameWorkbench && next.card) {
+      const advance = (target: BackTarget): BackTarget => ({ ...target, steps: target.steps + (replace ? 0 : 1) });
+      if (!cur.card && !cur.issue) state.workbench = { hash: toHash({ ...cur, project: cur.project ?? null }), steps: 1 };
+      else if (previous.workbench) state.workbench = advance(previous.workbench);
+      if (next.issue && cur.card === next.card) {
+        if (!cur.issue) state.cardList = { hash: toHash({ ...cur, project: cur.project ?? null }), steps: 1 };
+        else if (previous.cardList) state.cardList = advance(previous.cardList);
+      }
+    }
     // 补全旧地址/空地址时不留历史记录，避免「后退」回到无项目的地址又被补回来
-    if (cur.project === undefined) history.replaceState(null, '', hash), setRoute(parseHash(hash));
-    else location.hash = hash;
+    if (replace) history.replaceState(state, '', hash);
+    else history.pushState(state, '', hash);
+    setRoute(parseHash(hash));
   }, []);
   return [route, update];
 }
@@ -160,9 +187,10 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
 
   const openIssue = useCallback((key: string) => go({ issue: key }), [go]);
   const closeIssue = useCallback(() => go({ issue: null }), [go]);
+  const changeCard = useCallback((card: string | null) => go({ card, issue: null }), [go]);
   // 切项目：保留当前页面（全部项目下没有项目页面时回到工作台），关掉详情
   const switchProject = useCallback(
-    (key: string | null) => go({ project: key, page: key === null && PROJECT_PAGES.includes(route.page) ? 'me' : route.page, issue: null }),
+    (key: string | null) => go({ project: key, page: key === null && PROJECT_PAGES.includes(route.page) ? 'me' : route.page, issue: null, card: null }),
     [go, route.page],
   );
   const current = projects.data?.find((p) => p.key === pk);
@@ -199,7 +227,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                     aria-current={route.page === p}
                     disabled={disabled}
                     title={disabled ? '请先选择具体项目' : undefined}
-                    onClick={() => go({ page: p, issue: null })}
+                    onClick={() => go({ page: p, issue: null, card: null })}
                   >
                     {PAGE_LABEL[p]}
                   </button>
@@ -262,7 +290,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           {route.page === 'hours' && <HoursWorkspace key={pk ?? '*'} projectKey={pk} onOpen={openIssue} tab={route.tab === 'review' ? 'review' : 'report'} onTabChange={tab => go({ tab: tab === 'review' ? 'review' : null })} />}
           {route.page === 'versions' && pk && <VersionView key={pk} projectKey={pk} onOpen={openIssue}/>}
           {route.page === 'notifications' && <NotificationsView projectKey={pk} onOpen={openIssue} onMcp={()=>go({page:'mcp',issue:null})}/>}
-          {route.page === 'me' && <MyWorkView projectKey={pk} onOpen={openIssue} />}
+          {route.page === 'me' && <MyWorkView projectKey={pk} onOpen={openIssue} cardId={route.card ?? null} onCardChange={changeCard} />}
           {projectPage && pk && project.error && <ErrorState error={project.error} onRetry={project.reload} />}
           {projectPage && pk && !project.error && !project.data && <Loading />}
           {projectPage && pk && project.data && (route.page === 'tree' || route.page === 'flat') && (
@@ -285,7 +313,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           issueKey={route.issue}
           jiraBaseUrl={me.jiraBaseUrl}
           currentProject={pk}
-          onSwitchProject={(key) => go({ project: key, issue: route.issue })}
+          onSwitchProject={(key) => go({ project: key, issue: route.issue, card: null })}
           onOpen={openIssue}
           onClose={closeIssue}
           onCreate={setCreating}

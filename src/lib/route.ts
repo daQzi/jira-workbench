@@ -13,6 +13,8 @@ export interface Route {
   issue: string | null;
   /** 页内标签，如工时检查；旧 review 地址规范化为 hours?tab=review */
   tab?: string | null;
+  /** 我的工作台中展开的本机卡片 */
+  card?: string | null;
 }
 
 const isPage = (s: string | undefined): s is Page => !!s && (PAGES as string[]).includes(s);
@@ -23,19 +25,23 @@ export function parseHash(hash: string): Route {
   const params = new URLSearchParams(query);
   const issue = params.get('issue');
   const tab = a === 'review' || b === 'review' || params.get('tab') === 'review' ? { tab: 'review' as const } : {};
+  const cardId = params.get('card');
+  const card = cardId ? { card: cardId } : {};
   // 旧地址 #/me、#/hours：页面保留，项目待补
-  if (!a || isPage(a) || a === 'review') return { project: undefined, page: a === 'review' ? 'hours' : isPage(a) ? a : 'me', issue, ...(a === 'review' || a === 'hours' ? tab : {}) };
+  if (!a || isPage(a) || a === 'review') return { project: undefined, page: a === 'review' ? 'hours' : isPage(a) ? a : 'me', issue, ...(a === 'review' || a === 'hours' ? tab : {}), ...(!a || a === 'me' ? card : {}) };
   const project = a.toUpperCase() === ALL ? null : a;
   let page: Page = b === 'review' ? 'hours' : isPage(b) ? b : 'me';
+  const workbench = page === 'me';
   if (project === null && PROJECT_PAGES.includes(page)) page = 'me';
-  return { project, page, issue, ...(page === 'hours' ? tab : {}) };
+  return { project, page, issue, ...(page === 'hours' ? tab : {}), ...(workbench ? card : {}) };
 }
 
-export function toHash(r: { project: string | null; page: Page; issue: string | null; tab?: string | null }): string {
+export function toHash(r: { project: string | null; page: Page; issue: string | null; tab?: string | null; card?: string | null }): string {
   const page = r.project === null && PROJECT_PAGES.includes(r.page) ? 'me' : r.page;
   const base = `#/${r.project === null ? ALL : encodeURIComponent(r.project)}/${page}`;
   const params = new URLSearchParams();
   if (page === 'hours' && r.tab === 'review') params.set('tab', 'review');
+  if (r.page === 'me' && r.card) params.set('card', r.card);
   if (r.issue) params.set('issue', r.issue);
   const query = params.toString();
   return query ? `${base}?${query}` : base;

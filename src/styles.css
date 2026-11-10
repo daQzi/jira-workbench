@@ -926,3 +926,10 @@ body { background:radial-gradient(900px 420px at 90% -10%,color-mix(in srgb,var(
 .hours-page-tabs button[aria-selected='true']::after { content:'';position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--accent);border-radius:2px 2px 0 0; }
 .hours-page-tabs button:hover { color:var(--accent); }
 .hours-workspace .review-page .workspace-intro { margin-top:0; }
+
+.workbench-list-nav { margin:0 0 12px; }
+.workbench-back { display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:6px 9px;margin-left:-9px;border:0;border-radius:7px;background:transparent;color:var(--ink-2);font:13px var(--font-body);cursor:pointer;transition:background .15s,color .15s; }
+.workbench-back:hover { background:color-mix(in srgb,var(--accent) 8%,transparent);color:var(--accent); }
+.workbench-back:focus-visible { outline:2px solid var(--accent);outline-offset:3px; }
+.workbench-back svg { flex:none; }
+@media(pointer:coarse) { .workbench-back { min-height:44px; } }
