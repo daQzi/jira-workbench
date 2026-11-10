@@ -790,3 +790,46 @@ span.edit-trigger { display: inline-block; min-width: 24px; }
 .inbox-list{display:flex;flex-direction:column;gap:9px;}.inbox-list article{display:flex;align-items:center;border:1px solid var(--line);background:var(--card);border-radius:8px;padding:13px 16px;gap:12px;}.inbox-list article.read{background:var(--paper);}.inbox-content{display:flex;gap:13px;align-items:flex-start;flex:1;min-width:0;text-align:left;border:0;background:none;padding:0;}.inbox-content strong{font-weight:500;}.inbox-content p{margin:5px 0;color:var(--ink-2);font-size:12px;}.inbox-content small{font-size:11px;color:var(--ink-3);}.notice-dot{width:7px;height:7px;border-radius:50%;background:var(--t-req);flex:none;margin-top:6px;}.notice-dot.overdue,.notice-dot.mcp{background:var(--danger);}.notice-dot.soon,.notice-dot.hours{background:var(--warn);}.inbox-list .read .notice-dot{background:var(--line);}.inbox-list .btn{flex:none;}
 .saved-manage{font-size:12px;color:var(--ink-2);margin:12px 0;}.saved-manage>span{display:inline-flex;gap:7px;align-items:center;margin:8px 16px 0 0;}
 @media(max-width:700px){.report-stats{grid-template-columns:repeat(2,minmax(0,1fr));}.workspace-intro{align-items:flex-start;}.workspace-intro h2{font-size:19px;}.work-view-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.audit-list>button{align-items:flex-start;flex-wrap:wrap;}.audit-list .err{width:100%;}.inbox-list article{padding:12px;}.saved-views .input{width:100%;min-width:0;}.inbox-content strong{overflow-wrap:anywhere;}.selection-bar{flex-wrap:wrap;}}
+
+/* 自定义任务清单工作台：项目入口仍由左上角 ProjectSwitcher 统一管理。 */
+.workbench-actions { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+.card-workbench .workspace-intro { align-items:flex-start;flex-wrap:wrap; }
+.card-workbench .workspace-intro>div { min-width:0; }
+.workbench-context { display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;color:var(--ink-2);font-size:12px;padding:0 0 16px;margin-bottom:18px;border-bottom:1px solid var(--line); }
+.workbench-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start; }
+.workbench-card { min-width:0;background:var(--card);border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow);overflow:hidden; }
+.workbench-card.wide { grid-column:1/-1; }
+.workbench-card-head { display:flex;gap:10px;justify-content:space-between;align-items:flex-start;padding:16px 16px 12px; }
+.workbench-card-head>div { min-width:0; }
+.workbench-card-head[draggable=true] { cursor:grab; }
+.workbench-card-head h3 { margin:0;display:flex;align-items:center;flex-wrap:wrap;gap:8px;font:17px var(--font-display);overflow-wrap:anywhere; }
+.workbench-card-head p { margin:6px 0 0;font-size:12px;color:var(--ink-2);overflow-wrap:anywhere; }
+.workbench-card-head>.btn { flex:none; }
+.workbench-count { padding:1px 6px;background:var(--paper-2);border-radius:4px;color:var(--ink-2);font:12px var(--font-mono); }
+.workbench-custom { padding:1px 5px;border-radius:3px;background:var(--accent-soft);color:#9b3610;font:11px var(--font-body); }
+.workbench-grip { color:var(--ink-2); }
+.workbench-card-items { padding:0 16px; }
+.workbench-task { display:flex;align-items:center;border-top:1px solid var(--line-2);gap:6px; }
+.workbench-task-open { flex:1;min-width:0;border:0;background:none;text-align:left;padding:12px 0; }
+.workbench-task-open:hover .workbench-task-title>span:last-child { color:var(--accent); }
+.workbench-task-title { display:flex;gap:8px;align-items:baseline; }
+.workbench-task-title>span:last-child { overflow-wrap:anywhere; }
+.workbench-task-title .type-badge { flex:none; }
+.workbench-task-meta { display:flex;align-items:center;gap:9px;flex-wrap:wrap;color:var(--ink-2);font-size:11px;margin-top:7px; }
+.workbench-copy { flex:none;opacity:.6; }
+.workbench-task:hover .workbench-copy,.workbench-copy:focus-visible { opacity:1; }
+.workbench-card-foot { display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid var(--line-2);margin:0 16px;padding:9px 0;color:var(--ink-2);font-size:11px;flex-wrap:wrap; }
+.workbench-card-foot>div { display:flex;gap:4px;flex-wrap:wrap; }
+.workbench-empty { padding:10px 16px 20px;color:var(--ink-2);font-size:12px; }
+.workbench-add { display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;min-height:160px;padding:24px 16px;background:transparent;border:1px dashed var(--line);border-radius:9px; }
+.workbench-add:hover { background:var(--card);border-color:var(--ink-2); }
+.workbench-add strong { font-weight:500; }.workbench-add span { font-size:12px;color:var(--ink-2); }
+.workbench-editbar { display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding:12px;margin-bottom:16px;background:var(--paper-2);border-radius:6px;font-size:12px; }
+.workbench-card-tools { display:flex;gap:6px;flex-wrap:wrap;padding:0 16px 12px; }
+.workbench-library { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px; }
+.workbench-template { background:var(--paper);border:1px solid var(--line);border-radius:6px;text-align:left;padding:13px;display:flex;flex-direction:column;gap:6px;min-width:0; }
+.workbench-template strong { font-weight:500; }.workbench-template span { color:var(--ink-2);font-size:12px; }.workbench-template:hover { background:var(--accent-soft);border-color:var(--accent); }.workbench-template.custom { border-style:dashed; }
+.work-card-checks { border:0;padding:0;margin:0; }.work-card-checks legend { margin-bottom:6px; }.work-card-checks label { display:flex;align-items:center;gap:5px; }.work-card-checks input { margin:0; }.work-card-preview { color:var(--ink-2);background:var(--paper);border-radius:6px;padding:12px;margin:0; }
+@media(max-width:1100px) { .workbench-library { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:700px) { .workbench-grid,.workbench-library,.work-card-form { grid-template-columns:minmax(0,1fr); }.card-workbench .workspace-intro { gap:14px; }.workbench-card-head { padding:14px; }.workbench-card-items { padding:0 14px; } }
+@media(pointer:coarse) { .workbench-actions .btn,.workbench-card-tools .btn,.workbench-card-head .btn,.workbench-card-foot .btn { min-height:40px;height:auto; }.work-card-form input,.work-card-form select { font-size:16px; } }
