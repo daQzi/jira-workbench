@@ -35,6 +35,12 @@ async function request<T>(method: string, url: string, body?: unknown, signal?: 
     signal,
   }), method !== 'GET');
   const data = res.status === 204 ? null : await res.json().catch(() => null);
+  // 同一 URL 已被其他组件发起或替换时，本地代理用 202 表示请求仍在共享队列里。
+  if (res.status === 202 && (data as { pending?: boolean } | null)?.pending === true) {
+    if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return request<T>(method, url, body, signal);
+  }
   if (!res.ok) {
     if (res.status === 401 && !url.startsWith('/api/login')) onUnauthorized?.();
     throw new ApiError(res.status, messageOf(data, res.status));
@@ -113,9 +119,9 @@ export const api = {
   settings: () => request<ConnSettings>('GET', '/api/settings'),
   saveSettings: (input: ConnSettingsInput) => writeOnce(`settings:${JSON.stringify(input)}`, () => request<ConnSettings>('PUT', '/api/settings', input)),
 
-  projects: () => jira<Project[]>('project'),
-  project: (key: string) => jira<ProjectDetail>(`project/${encodeURIComponent(key)}`),
-  priorities: () => jira<NamedRef[]>('priority'),
+  projects: (signal?: AbortSignal) => jira<Project[]>('project', signal),
+  project: (key: string, signal?: AbortSignal) => jira<ProjectDetail>(`project/${encodeURIComponent(key)}`, signal),
+  priorities: (signal?: AbortSignal) => jira<NamedRef[]>('priority', signal),
 
   search(jql: string, opts: { startAt?: number; maxResults?: number; fields: string[] }, signal?: AbortSignal) {
     const q = new URLSearchParams({
@@ -179,7 +185,7 @@ export const api = {
   /** 移除链接（只删两个问题之间的关系，问题本身不受影响） */
   removeLink: (linkId: string) => jiraWrite<null>('DELETE', `issueLink/${encodeURIComponent(linkId)}`),
   linkTypes: () => jira<{ issueLinkTypes: LinkTypeDef[] }>('issueLinkType').then((r) => r.issueLinkTypes),
-  fields: () => jira<FieldDef[]>('field'),
+  fields: (signal?: AbortSignal) => jira<FieldDef[]>('field', signal),
 
   /** 日报交给大模型拆成任务草稿（经本地代理，Key 不进浏览器） */
   llmSplit: (body: { text: string; date: string; defaultProject: string; projects: string[] }) =>

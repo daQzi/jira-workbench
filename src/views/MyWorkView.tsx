@@ -26,8 +26,7 @@ function CardWorkbench({ projectKey, onOpen }: { projectKey: string | null; onOp
   const [library, setLibrary] = useState(false);
   const [editor, setEditor] = useState<WorkCard | null>(null);
   const [allId, setAllId] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const dragId = useRef<string | null>(null);
+    const dragId = useRef<string | null>(null);
   const activeCards = draftLayout ?? cards;
   // 编辑草稿不触发额外项目查询，保存后再加载；共享同一批数据保证卡片统计一致。
   const everyone = needsProjectIssues(cards);
@@ -72,27 +71,29 @@ function CardWorkbench({ projectKey, onOpen }: { projectKey: string | null; onOp
         <button className="btn primary" disabled={atLimit} onClick={() => setLibrary(true)}>＋ 添加卡片</button>
       </>}
     </div></div>
-    {data.error && <ErrorState error={data.error} onRetry={data.reload}/>}
-    {data.data && <div className="workbench-context"><span>{everyone ? '项目内所有人' : '与我相关'} · 未解决事项及近30天解决事项</span><span>{activeCards.length} / {CARD_LIMIT} 张卡片{draftLayout ? ' · 布局编辑中' : ''}</span></div>}
-    {data.data && data.data.total > issues.length && <div className="management-notice" role="status">共 {data.data.total} 项，当前仅加载前 {issues.length} 项；卡片数量、筛选与导出基于已加载结果。请在左上角选择具体项目缩小范围。</div>}
+    {data.error && !data.data && <ErrorState error={data.error} onRetry={data.reload}/>}
+    {data.data && <div className="workbench-context"><span><i className={`workbench-sync-dot${data.data.backgroundLoading ? ' active' : ''}`}/>{everyone ? '项目内所有人' : '与我相关'} · 未解决事项及近30天解决事项</span><span>{activeCards.length} / {CARD_LIMIT} 张卡片{draftLayout ? ' · 布局编辑中' : ''}</span></div>}
+    {data.data && <div className="workbench-sync" role="status"><span>{data.data.backgroundLoading ? '正在同步最新数据，已有内容可继续操作' : data.data.error ? '当前显示上次读取的数据，请重试同步' : data.data.provisional ? '首批数据已就绪，其余清单仍在补全' : '数据已同步'}</span><span>{data.data.issues.length} / {Math.min(1000, data.data.total)} 条{data.data.backgroundLoading ? ` · ${data.data.progress}%` : ''}</span>{data.data.backgroundLoading && <span className="workbench-sync-track" aria-hidden="true"><i style={{ transform: `scaleX(${data.data.progress / 100})` }}/></span>}</div>}
+    {data.data?.provisional && data.data.issues.length > 0 && !data.data.backgroundLoading && <div className="management-notice">当前卡片基于首批或临时数据，最终统计仍在补全，请稍后刷新核对。</div>}
+    {data.data?.error && <div className="management-notice" role="alert">{data.data.error.message} 当前结果可能不完整或不是最新，统计与导出以页面显示范围为准。<button className="btn small" onClick={data.reload}>重试同步</button></div>}
+    {data.data && !data.data.backgroundLoading && data.data.total > issues.length && <div className="management-notice" role="status">共 {data.data.total} 项，当前仅加载前 {issues.length} 项；卡片数量、筛选与导出基于已加载结果。请在左上角选择具体项目缩小范围。</div>}
     {draftLayout && !all && <div className="workbench-editbar"><span>拖动卡片标题排序，或使用前移 / 后移。移除卡片不会删除 Jira 问题。</span><div className="workbench-actions"><button className="btn" onClick={() => { setDraftLayout(null); setLibrary(false); setEditor(null); }}>取消</button><button className="btn primary" onClick={() => { if (persist(draftLayout)) { setDraftLayout(null); toast('工作台布局已保存'); } }}>保存布局</button></div></div>}
     {!data.data ? !data.error && <Loading rows={6}/> : all ? <>
       {all.view === 'blocked' && <div className="management-notice">仅显示未完成的入向 Blocks 依赖；需求下子项的父子链接不视为阻塞。</div>}
       {all.view === 'missing' && <div className="management-notice">检查开发人员、开发预估时间、开发完成/解决日期；未结束任务也可能缺完成日期。</div>}
-      <ManagementTable key={all.id} issues={listFor(all)} onOpen={onOpen} scope={`work-card:${projectKey ?? '*'}:${all.id}`} onChanged={data.reload}/>
+      <ManagementTable key={all.id} issues={data.data?.error ? [] : listFor(all)} onOpen={onOpen} scope={`work-card:${projectKey ?? '*'}:${all.id}`} onChanged={data.reload}/>
     </> : <div className="workbench-grid" aria-busy={data.loading}>
       {activeCards.map((c, index) => {
-        const list = listFor(c), isExpanded = expanded.has(c.id), visible = list.slice(0, isExpanded ? undefined : c.limit);
+        const list = listFor(c), visible = list.slice(0, c.limit);
         return <section className={`workbench-card${c.width === 'full' ? ' wide' : ''}`} key={c.id} aria-label={c.title} data-card-id={c.id}
           onDragOver={e => { if (draftLayout) e.preventDefault(); }} onDrop={e => { e.preventDefault(); if (draftLayout && dragId.current) move(dragId.current, c.id); dragId.current = null; }}>
-          <header className="workbench-card-head" draggable={!!draftLayout} onDragStart={e => { if (!draftLayout) return; dragId.current = c.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', c.id); }} onDragEnd={() => { dragId.current = null; }}>
+          <header className={`workbench-card-head accent-${index % 4}`} draggable={!!draftLayout} onDragStart={e => { if (!draftLayout) return; e.currentTarget.closest('.workbench-card')?.classList.add('is-dragging'); dragId.current = c.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', c.id); }} onDragEnd={e => { e.currentTarget.closest('.workbench-card')?.classList.remove('is-dragging'); dragId.current = null; }}>
             <div><h3>{draftLayout && <span className="workbench-grip" aria-hidden="true">⠿</span>}{c.title}<span className="workbench-count">{list.length}</span>{c.custom && <span className="workbench-custom">自定义</span>}</h3><p>{cardSummary(c)}</p></div>
             <button className="btn small ghost" aria-label={`配置${c.title}`} onClick={() => setEditor(c)}>配置</button>
           </header>
           {draftLayout && <div className="workbench-card-tools"><button className="btn small" disabled={!index} aria-label={`${c.title}前移`} onClick={() => move(c.id, activeCards[index - 1].id)}>← 前移</button><button className="btn small" disabled={index === activeCards.length - 1} aria-label={`${c.title}后移`} onClick={() => move(c.id, activeCards[index + 1].id)}>后移 →</button><button className="btn small" onClick={() => update(activeCards.map(x => x.id === c.id ? { ...x, width: x.width === 'full' ? 'half' : 'full' } : x))}>{c.width === 'full' ? '改为半行' : '铺满整行'}</button><button className="btn small ghost" aria-label={`移除${c.title}`} onClick={() => update(activeCards.filter(x => x.id !== c.id))}>移除</button></div>}
-          <div className="workbench-card-items">{visible.map(i => <div className="workbench-task" key={i.key}><button className="workbench-task-open" onClick={() => onOpen(i.key)}><span className="workbench-task-title"><TypeBadge type={i.fields.issuetype.name}/><span>{i.fields.summary}</span></span><span className="workbench-task-meta"><span className="mono">{i.key}</span><StatusPill status={i.fields.status.name}/>{dueDate(i) && !finished(i) ? <span className={overdue(i) ? 'err' : ''}>{overdue(i) ? '已逾期 · ' : '到期 '}{dueDate(i)}</span> : <span>{relativeTime(i.fields.updated)}</span>}</span></button><CopyIssueButton issueKey={i.key} summary={i.fields.summary} className="workbench-copy"/></div>)}</div>
-          {!list.length && <p className="workbench-empty">当前条件下暂无任务</p>}
-          <footer className="workbench-card-foot"><span>显示 {visible.length} / {list.length} 条</span><div>{list.length > c.limit && <button className="btn small ghost" aria-expanded={isExpanded} onClick={() => setExpanded(prev => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })}>{isExpanded ? '收起' : '展开'}</button>}<button className="btn small ghost" onClick={() => setAllId(c.id)}>查看全部 →</button></div></footer>
+          <div className="workbench-card-items">{visible.map(i => <div className="workbench-task" key={i.key}><button className="workbench-task-open" onClick={() => onOpen(i.key)}><span className="workbench-task-title"><TypeBadge type={i.fields.issuetype.name}/><span>{i.fields.summary}</span></span><span className="workbench-task-meta"><span className="mono">{i.key}</span><StatusPill status={i.fields.status.name}/>{dueDate(i) && !finished(i) ? <span className={overdue(i) ? 'err' : ''}>{overdue(i) ? '已逾期 · ' : '到期 '}{dueDate(i)}</span> : <span>{relativeTime(i.fields.updated)}</span>}</span></button><CopyIssueButton issueKey={i.key} summary={i.fields.summary} className="workbench-copy"/></div>)}{Array.from({ length: Math.max(0, c.limit - visible.length) }, (_, slot) => <div className="workbench-slot" key={`slot-${slot}`} aria-hidden="true">{slot === 0 && visible.length < c.limit ? '暂无更多任务' : ''}</div>)}</div>
+          <footer className="workbench-card-foot"><span>显示 {visible.length} / {list.length} 条</span><div><button className="btn small ghost" onClick={() => setAllId(c.id)}>查看全部 →</button></div></footer>
         </section>;
       })}
       <button className="workbench-add" disabled={atLimit} onClick={() => setLibrary(true)}><strong>＋ 再贴一张常用清单</strong><span>{atLimit ? `已达 ${CARD_LIMIT} 张上限` : '内置卡片 / 已保存视图 / 自定义条件'}</span></button>

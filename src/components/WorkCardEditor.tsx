@@ -15,8 +15,8 @@ export function WorkCardEditor({ card, issues, hourFields, user, canPreviewAll, 
 }) {
   const [draft, setDraft] = useState(card);
   const [error, setError] = useState('');
-  const options = useAsync(async () => {
-    const [priorities, project] = await Promise.all([api.priorities(), projectKey ? api.project(projectKey) : Promise.resolve(null)]);
+  const options = useAsync(async signal => {
+    const [priorities, project] = await Promise.all([api.priorities(signal), projectKey ? api.project(projectKey, signal) : Promise.resolve(null)]);
     return { priorities, project };
   }, [projectKey]);
   function set(patch: Partial<WorkCard>) { setDraft(d => ({ ...d, ...patch })); setError(''); }

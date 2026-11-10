@@ -10,11 +10,13 @@ import { fileURLToPath } from 'node:url';
 import { checkWrite as checkWritePolicy, fileResponseHeaders, isAttachmentUpload, linkDeleteId, ownedTarget, parseFilePath } from './policy.mjs';
 import { configureLlm, llmStatus, splitDaily } from './llm.mjs';
 import { createSessionStore } from './sessionStore.mjs';
+import { createReadCache, readTtl } from './read-cache.mjs';
 import { DEFAULT_JIRA_BASE_URL, DEFAULT_LLM, isLocalRequest, jiraOrDefault, maskKey, parseSettingsInput, readJson, saveSettings } from './settings.mjs';
 
 export { DEFAULT_JIRA_BASE_URL };
 
 // 运行配置：命令行启动时取环境变量；桌面端通过 startServer(opts) 传入
+const activeJiraReads = new Map();
 let JIRA_BASE_URL = '';
 let PORT = 8787;
 const HOST = '127.0.0.1';
@@ -51,6 +53,7 @@ const sessions = new Map();
 /** 会话落盘（重启免登录）；未配置目录时只在内存 */
 let store = null;
 let mcp = null;
+const readCache = createReadCache();
 let saveTimer = null;
 let lastSavedAt = 0;
 // lastSeen 每次请求都会变，最多每分钟落盘一次；登录/退出立即保存
@@ -71,7 +74,10 @@ function persistSessions(now = false) {
 }
 
 function dropSession(sid) {
-  if (sessions.delete(sid)) persistSessions(true);
+  if (sessions.delete(sid)) {
+    readCache.clearSession(sid);
+    persistSessions(true);
+  }
 }
 
 function parseCookieHeader(header = '') {
@@ -134,6 +140,22 @@ function getSession(req) {
   return { sid, ...s, ref: s };
 }
 
+/** 同一 Jira 会话里取消已被替代的读请求，避免慢请求继续占用旧版 Jira 的连接。 */
+function registerRead(key, external) {
+  const previous = activeJiraReads.get(key);
+  if (previous && !previous.signal.aborted) return null;
+  const ctrl = new AbortController();
+  const abort = () => ctrl.abort(external?.reason);
+  external?.addEventListener('abort', abort, { once: true });
+  activeJiraReads.set(key, ctrl);
+  const timer = AbortSignal.timeout(JIRA_TIMEOUT_MS);
+  const timedAbort = () => ctrl.abort(timer.reason);
+  timer.addEventListener('abort', timedAbort, { once: true });
+  return ctrl;
+}
+function finishRead(key, ctrl) {
+  if (ctrl && activeJiraReads.get(key) === ctrl) activeJiraReads.delete(key);
+}
 async function jiraFetch(jar, pathAndQuery, init = {}) {
   const res = await fetch(JIRA_BASE_URL + pathAndQuery, {
     ...init,
@@ -145,7 +167,7 @@ async function jiraFetch(jar, pathAndQuery, init = {}) {
       ...(init.headers || {}),
     },
     redirect: 'manual',
-    signal: AbortSignal.timeout(JIRA_TIMEOUT_MS),
+    signal: init.signal ?? AbortSignal.timeout(JIRA_TIMEOUT_MS),
   });
   absorbSetCookies(jar, res);
   return res;
@@ -273,6 +295,7 @@ async function handlePutSettings(req, res) {
   let headers = {};
   if (jiraChanged) {
     sessions.clear();
+    readCache.clear();
     persistSessions(true);
     headers = { 'Set-Cookie': 'wb_sid=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0' };
   }
@@ -364,6 +387,28 @@ async function handleJiraProxy(req, res, url) {
     }
     if (!unlinkId && !owned) console.log(`[write] ${s.user} ${req.method} ${sub}`);
   }
+  // 元数据合并重复请求并短期缓存，普通列表也仅保留极短 TTL。
+  // 响应在本地会话内转发，不给浏览器设置公共 HTTP 缓存；写操作不进入这里。
+  if (req.method === 'GET') {
+    const ttl = readTtl(sub);
+    if (ttl) {
+      const readKey = `${s.sid}\0${sub}${url.search}`;
+      const ctrl = registerRead(readKey, req.signal);
+      if (!ctrl) {
+        res.writeHead(202, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-WB-Cache': 'shared' });
+        return res.end(JSON.stringify({ pending: true }));
+      }
+      const cached = await readCache.get(s.sid, `/rest/api/2/${sub}${url.search}`, ttl, async () => {
+        const upstream = await jiraFetch(s.cookies, `/rest/api/2/${sub}${url.search}`);
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        const contentType = upstream.headers.get('content-type') || '';
+        return { status: upstream.status, buf, contentType };
+      }).finally(() => finishRead(readKey, ctrl));
+      if (cached.status === 401) dropSession(s.sid);
+      if (!cached.contentType.includes('json') && cached.buf.length) return sendError(res, cached.status >= 400 ? cached.status : 502, `Jira 返回非 JSON 响应（HTTP ${cached.status}）`);
+      return res.writeHead(cached.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-WB-Cache': 'shared' }), res.end(cached.buf);
+    }
+  }
   const search = req.method === 'DELETE' && sub.startsWith('attachment/') ? '' : url.search;
   const jr = await jiraFetch(s.cookies, `/rest/api/2/${sub}${search}`, init);
   if (jr.status === 401) dropSession(s.sid);
@@ -374,6 +419,7 @@ async function handleJiraProxy(req, res, url) {
     return sendError(res, jr.status >= 400 ? jr.status : 502, `Jira 返回非 JSON 响应（HTTP ${jr.status}）`);
   }
   res.writeHead(jr.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  if (req.method !== 'GET') readCache.clear();
   res.end(buf);
 }
 
@@ -457,6 +503,7 @@ export async function startServer(opts) {
   if (opts.distDir) DIST_DIR = opts.distDir;
   configureLlm(LLM_OPTS);
   sessions.clear();
+  readCache.clear();
   store = opts.sessionDir ? createSessionStore(opts.sessionDir) : null;
   if (store) for (const [sid, s] of store.load(SESSION_IDLE_MS)) sessions.set(sid, s);
   await mcp?.close();
@@ -478,6 +525,7 @@ export async function startServer(opts) {
         headers: upload ? { 'X-Atlassian-Token': 'nocheck' } : body !== undefined ? { 'Content-Type': 'application/json' } : {},
         ...(body !== undefined ? { body: upload ? body : JSON.stringify(body) } : {}),
       });
+      if (method !== 'GET') readCache.clear();
       const result = r.status === 204 ? null : await r.json().catch(() => { throw Object.assign(new Error('Jira 返回非 JSON 响应'), { status: 502 }); });
       if (r.status === 401) dropSession(session.sid);
       if (!r.ok) throw Object.assign(new Error([...(result?.errorMessages || []), ...Object.values(result?.errors || {})].join('；') || `Jira HTTP ${r.status}`), { status: r.status, code: r.status === 401 ? 'AUTH_REQUIRED' : 'JIRA_ERROR' });

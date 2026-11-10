@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, setUnauthorizedListener, type Me } from './lib/api';
-import { useAsync } from './lib/useAsync';
+import { useCachedAsync } from './lib/requestCache';
+import { ThemeToggle } from './components/ThemeToggle';
 import { SessionProvider, useSession } from './lib/session';
 import { CreateDialog, type CreateTarget } from './components/CreateDialog';
 import type { Project } from './lib/types';
@@ -91,7 +92,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
   const [route, go] = useRoute();
   const [creating, setCreating] = useState<CreateTarget | null>(null);
   const [palette, setPalette] = useState(false);
-  const projects = useAsync<Project[]>(() => api.projects(), []);
+  const projects = useCachedAsync<Project[]>('projects', signal => api.projects(signal), []);
 
   // 地址里没写项目（首次打开、旧地址）：补成上次的项目
   useEffect(() => {
@@ -144,7 +145,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
     },
     [pk],
   );
-  const project = useAsync((signal) => (pk ? fetchProject(pk, signal) : Promise.resolve(null)), [pk]);
+  const project = useCachedAsync(`project:${pk ?? '*'}`, signal => pk ? api.project(pk, signal) : Promise.resolve(null), [pk]);
 
   // 记住的模块/版本在项目里已不存在时忽略，避免 JQL 报错
   let filter = savedFilter;
@@ -208,7 +209,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         </div>
       </nav>
 
-      <main className="main">
+      <main className="main"><ThemeToggle />
         <header className="topbar">
           <div className="title-block">
             <h1>{PAGE_LABEL[route.page]}</h1>
@@ -371,9 +372,4 @@ function NewButton({ onCreate, defaultType }: { onCreate: (typeName?: string) =>
 
 function initialFilter(project: string | null): FilterState {
   return project ? loadFilter(project) : DEFAULT_FILTER;
-}
-
-async function fetchProject(key: string, signal: AbortSignal) {
-  if (signal.aborted) throw new DOMException('aborted', 'AbortError');
-  return api.project(key);
 }

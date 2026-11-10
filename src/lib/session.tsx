@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { canWrite, type Me } from './api';
+import { clearReadCache } from './requestCache';
 
 interface SessionValue {
   me: Me;
@@ -23,7 +24,7 @@ export function SessionProvider({ me, children }: { me: Me; children: ReactNode 
   const [version, setVersion] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const seq = useRef(0);
-  const bump = useCallback(() => setVersion((v) => v + 1), []);
+  const bump = useCallback(() => { clearReadCache(); setVersion((v) => v + 1); }, []);
   const toast = useCallback((msg: string, kind: 'ok' | 'error' = 'ok') => {
     const id = ++seq.current;
     setToasts((t) => [...t, { id, msg, kind }]);
