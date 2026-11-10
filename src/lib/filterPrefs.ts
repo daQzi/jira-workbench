@@ -14,12 +14,21 @@ const strList = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string =>
 /** 把存储里的任意值收敛成合法的 FilterState；未知阶段等脏数据直接丢弃 */
 export function normalizeFilter(raw: unknown): FilterState {
   const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  // 旧版单人 person 自动迁移；显式空 people 表示清空，不回退旧值。
+  const rawPeople = Array.isArray(r.people) ? r.people : r.person ? [r.person] : [];
+  const people = [...new Map(rawPeople.flatMap(item => {
+    const p = item && typeof item === 'object' ? item as Record<string, unknown> : null;
+    if (!p || typeof p.name !== 'string' || !p.name.trim()) return [];
+    const name = p.name.trim();
+    return [[name, { name, displayName: typeof p.displayName === 'string' && p.displayName.trim() ? p.displayName.trim() : name }] as const];
+  })).values()];
   return {
     text: '',
     component: typeof r.component === 'string' ? r.component : '',
     version: typeof r.version === 'string' ? r.version : '',
     stages: strList(r.stages).filter((s): s is StageId => STAGE_IDS.has(s)),
-    onlyMine: r.onlyMine === true,
+    onlyMine: !people.length && r.onlyMine === true,
+    people,
     hideOldClosed: typeof r.hideOldClosed === 'boolean' ? r.hideOldClosed : DEFAULT_FILTER.hideOldClosed,
     types: strList(r.types),
   };
@@ -58,6 +67,7 @@ export function isDefaultFilter(f: FilterState): boolean {
     !f.text.trim() &&
     !f.component &&
     !f.version &&
+    !f.people.length &&
     !f.stages.length &&
     !f.types.length &&
     f.onlyMine === DEFAULT_FILTER.onlyMine &&

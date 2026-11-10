@@ -38,5 +38,31 @@ describe('filterPrefs', () => {
     expect(isDefaultFilter(DEFAULT_FILTER)).toBe(true);
     expect(isDefaultFilter({ ...DEFAULT_FILTER, text: ' a ' })).toBe(false);
     expect(isDefaultFilter({ ...DEFAULT_FILTER, hideOldClosed: false })).toBe(false);
+    expect(isDefaultFilter({ ...DEFAULT_FILTER, people: [{ name: 'alice', displayName: '小王' }] })).toBe(false);
+  });
+
+  it('按项目记住选中的人员，兼容旧筛选和清空操作', () => {
+    const kv = memory();
+    const people = [{ name: 'alice', displayName: '小王' }, { name: 'bob', displayName: '小李' }];
+    saveFilter('A', { ...DEFAULT_FILTER, people }, kv);
+    expect(loadFilter('A', kv)).toEqual({ ...DEFAULT_FILTER, people });
+    expect(loadFilter('B', kv)).toEqual(DEFAULT_FILTER);
+    expect(normalizeFilter({ onlyMine: true })).toEqual({ ...DEFAULT_FILTER, onlyMine: true });
+    saveFilter('A', DEFAULT_FILTER, kv);
+    expect(loadFilter('A', kv)).toEqual(DEFAULT_FILTER);
+  });
+
+  it('迁移旧单人筛选，排除无效账号并收敛互斥条件', () => {
+    expect(normalizeFilter({ person: { name: ' alice ', displayName: ' 小王 ', emailAddress: 'private' }, onlyMine: true })).toEqual({
+      ...DEFAULT_FILTER, people: [{ name: 'alice', displayName: '小王' }],
+    });
+    expect(normalizeFilter({ person: { name: 'alice', displayName: 1 } }).people).toEqual([{ name: 'alice', displayName: 'alice' }]);
+    for (const person of [null, 'alice', { name: 1 }, { name: ' ' }]) {
+      expect(normalizeFilter({ person, onlyMine: true })).toEqual({ ...DEFAULT_FILTER, onlyMine: true });
+    }
+  });
+  it('多人去重清洗、清空与旧单人配置不会混用', () => {
+    expect(normalizeFilter({ people: [{ name: ' alice ', displayName: '小王' }, { name: 'alice', displayName: ' 王同学 ' }, null, { name: 'bob' }, { name: '' }], onlyMine: true }).people).toEqual([{ name: 'alice', displayName: '王同学' }, { name: 'bob', displayName: 'bob' }]);
+    expect(normalizeFilter({ people: [], person: { name: 'old' }, onlyMine: true })).toEqual({ ...DEFAULT_FILTER, onlyMine: true });
   });
 });

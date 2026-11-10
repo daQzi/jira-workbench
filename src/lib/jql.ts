@@ -27,6 +27,8 @@ export interface IssueFilter {
   text?: string;
   stages?: StageId[];
   onlyMine?: boolean;
+  /** 经办人、开发人员或测试人员任一匹配的 Jira 用户名 */
+  people?: string[];
   /** 已结束的问题只保留最近 N 天内更新过的 */
   recentClosedDays?: number;
   closedStatuses?: string[];
@@ -46,7 +48,11 @@ export function buildJql(f: IssueFilter, orderBy = 'updated DESC'): string {
     const statuses = statusesOf(f.stages);
     if (statuses.length) clauses.push(`status in ${quoteList(statuses)}`);
   }
-  if (f.onlyMine) clauses.push(MINE_CLAUSE);
+  const people = [...new Set(f.people?.map(name => name.trim()).filter(Boolean))].sort();
+  if (people.length) {
+    const users = quoteList(people);
+    clauses.push(`(assignee in ${users} OR cf[10204] in ${users} OR cf[10401] in ${users})`);
+  } else if (f.onlyMine) clauses.push(MINE_CLAUSE);
   if (f.recentClosedDays && f.closedStatuses?.length) {
     clauses.push(`(status not in ${quoteList(f.closedStatuses)} OR updated >= -${f.recentClosedDays}d)`);
   }

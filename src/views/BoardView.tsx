@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState } from 'react';
-import { api, LIST_FIELDS, type Transition } from '../lib/api';
-import { buildJql } from '../lib/jql';
-import { CLOSED_STATUSES, STAGES, stageOf, type Stage, type StageId } from '../lib/stages';
+import { api, type Transition } from '../lib/api';
+import { boardQuery, BOARD_FRESH_MS } from '../lib/board';
+import { useBoardData } from '../lib/useBoardData';
+import { BoardStatistics } from '../components/BoardStatistics';
+import { STAGES, stageOf, type Stage, type StageId } from '../lib/stages';
 import { parentOf } from '../lib/tree';
 import { relativeTime, userName } from '../lib/format';
-import { useAsync } from '../lib/useAsync';
 import { useSession } from '../lib/session';
 import { useTransition } from '../lib/useTransition';
 import type { Issue, SearchResult } from '../lib/types';
@@ -12,8 +13,6 @@ import { Priority, StatusPill, TypeBadge, VersionTags } from '../components/Badg
 import { Modal } from '../components/Modal';
 import { ErrorState, Loading } from '../components/States';
 import type { FilterState } from '../components/FilterBar';
-
-const PER_COLUMN = 60;
 
 interface Props {
   projectKey: string;
@@ -40,7 +39,7 @@ export function transitionsByStage(list: Transition[]): Map<StageId, Transition[
 }
 
 export function BoardView({ projectKey, filter, onOpen }: Props) {
-  const { version, bump, canWriteProject, toast } = useSession();
+  const { version, bump, canWriteProject, toast, me } = useSession();
   const writable = canWriteProject(projectKey);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [over, setOver] = useState<StageId | null>(null);
@@ -54,34 +53,18 @@ export function BoardView({ projectKey, filter, onOpen }: Props) {
     () => (filter.stages.length ? STAGES.filter((s) => filter.stages.includes(s.id)) : STAGES),
     [filter.stages],
   );
-  const deps = JSON.stringify([projectKey, filter]);
-
-  const { data, error, loading, reload } = useAsync<SearchResult[]>(
-    (signal) =>
-      Promise.all(
-        columns.map((col) =>
-          api.search(
-            buildJql(
-              {
-                project: projectKey,
-                types: filter.types,
-                component: filter.component,
-                version: filter.version,
-                text: filter.text,
-                stages: [col.id],
-                onlyMine: filter.onlyMine,
-                recentClosedDays: filter.hideOldClosed ? 30 : undefined,
-                closedStatuses: CLOSED_STATUSES,
-              },
-              'priority ASC, updated DESC',
-            ),
-            { maxResults: PER_COLUMN, fields: LIST_FIELDS },
-            signal,
-          ),
-        ),
-      ),
-    [deps, version],
-  );
+  const namespace = `${me.jiraBaseUrl}:${me.name}`;
+  const preferenceKey = `wb.board.statistics:${namespace}:${projectKey}`;
+  const initialOpen = () => { try { return localStorage.getItem(preferenceKey) !== 'closed'; } catch { return true; } };
+  const [preference, setPreference] = useState(() => ({ key: preferenceKey, open: initialOpen() }));
+  if (preference.key !== preferenceKey) setPreference({ key: preferenceKey, open: initialOpen() });
+  const statsOpen = preference.key === preferenceKey ? preference.open : initialOpen();
+  const { snapshot, refresh, retryColumn } = useBoardData(projectKey, filter, namespace, version, statsOpen);
+  const loading = snapshot.checking || columns.some(col => snapshot.columns[col.id]?.loading);
+  const times = columns.map(col => snapshot.columns[col.id]?.result?.fetchedAt).filter((time): time is number => !!time);
+  const loadedAt = times.length ? Math.min(...times) : 0;
+  const stale = snapshot.checking || loading || !loadedAt || Date.now() - loadedAt >= BOARD_FRESH_MS || !!snapshot.error || columns.some(col => snapshot.columns[col.id]?.error);
+  const scope = `${namespace}:${projectKey}`;
 
   const byStage = drag?.transitions ? transitionsByStage(drag.transitions) : null;
 
@@ -121,13 +104,14 @@ export function BoardView({ projectKey, filter, onOpen }: Props) {
     run({ key: issue.key, summary: issue.fields.summary, status: issue.fields.status.name, current: issue.fields }, t);
   }
 
-  if (error && !data) return <ErrorState error={error} onRetry={reload} />;
-  if (!data) return <Loading />;
 
   return (
     <>
+      <div className="board-sync" role="status"><span>{loading ? (loadedAt ? '正在核对最新数据…' : '正在加载看板…') : snapshot.error ? '同步失败，当前结果可能不是最新' : loadedAt ? `上次更新 ${new Date(loadedAt).toLocaleTimeString('zh-CN', { hour12: false })}` : '等待加载'}{!loading && loadedAt > 0 && Date.now() - loadedAt >= BOARD_FRESH_MS ? ' · 缓存结果' : ''}</span><button className="btn small" disabled={loading || !!snapshot.stats?.loading} onClick={refresh}>{loading ? '同步中…' : '刷新看板与统计'}</button></div>
+      {snapshot.error && <ErrorState error={new Error(snapshot.error)} onRetry={refresh}/>}
+      <BoardStatistics key={boardQuery(projectKey, filter)} data={snapshot.stats} open={statsOpen} scope={scope} stale={stale} onOpen={onOpen} onRetry={refresh} onToggle={() => { const open = !statsOpen; setPreference({ key: preferenceKey, open }); try { localStorage.setItem(preferenceKey, open ? 'open' : 'closed'); } catch { /* 不影响统计 */ } }}/>
       {writable && <p className="board-tip muted">拖动卡片到其他列即可流转，只有工作流允许的列会高亮；需要补充字段时会弹窗。</p>}
-      <div className={`board${drag ? ' dragging' : ''}`} style={{ opacity: loading ? 0.6 : 1 }}>
+      <div className={`board${drag ? ' dragging' : ''}`} >
         {columns.map((col, i) => {
           const allowed = byStage?.get(col.id)?.length ?? 0;
           const state = !drag ? '' : !byStage ? 'pending' : allowed ? 'allowed' : 'blocked';
@@ -135,10 +119,13 @@ export function BoardView({ projectKey, filter, onOpen }: Props) {
             <Column
               key={col.id}
               stage={col}
-              result={data[i]}
+              result={snapshot.columns[col.id]?.result}
+              loading={!!snapshot.columns[col.id]?.loading || snapshot.checking}
+              error={snapshot.columns[col.id]?.error}
+              onRetry={retryColumn}
               delay={i}
               onOpen={onOpen}
-              draggable={writable}
+              draggable={writable && !stale}
               dropState={state}
               isOver={over === col.id}
               draggingKey={drag?.issue.key}
@@ -181,6 +168,9 @@ export function BoardView({ projectKey, filter, onOpen }: Props) {
 interface ColumnProps {
   stage: Stage;
   result?: SearchResult;
+  loading: boolean;
+  error?: string;
+  onRetry: () => void;
   delay: number;
   onOpen: (k: string) => void;
   draggable: boolean;
@@ -193,8 +183,7 @@ interface ColumnProps {
   onDrop: () => void;
 }
 
-function Column({ stage, result, delay, onOpen, draggable, dropState, isOver, draggingKey, onDragStart, onDragEnd, onDragOver, onDrop }: ColumnProps) {
-  if (!result) return null;
+function Column({ stage, result, loading, error, onRetry, delay, onOpen, draggable, dropState, isOver, draggingKey, onDragStart, onDragEnd, onDragOver, onDrop }: ColumnProps) {
   return (
     <section
       className={`column${dropState ? ` drop-${dropState}` : ''}${isOver ? ' over' : ''}`}
@@ -215,10 +204,13 @@ function Column({ stage, result, delay, onOpen, draggable, dropState, isOver, dr
         <h3 className={`stage-${stage.id}`}>
           <span style={{ color: 'var(--ink)' }}>{stage.name}</span>
         </h3>
-        <span className="count">{result.total}</span>
+        <span className="count">{result?.total ?? (error ? '!' : '…')}</span>
       </header>
       <div className="column-body">
-        {result.issues.map((issue) => {
+        {error && <div className="board-column-error" role="alert">{error}<button className="text-btn" onClick={onRetry}>重试此列</button></div>}
+        {loading && <p className="board-column-loading muted">{result ? '正在同步…' : '加载中…'}</p>}
+        {!result && loading && <Loading rows={3}/>}
+        {result?.issues.map((issue) => {
           const f = issue.fields;
           const parent = parentOf(issue);
           return (
@@ -241,9 +233,9 @@ function Column({ stage, result, delay, onOpen, draggable, dropState, isOver, dr
                 </span>
                 <span className="card-status muted">{f.status.name}</span>
               </span>
-              <span className="card-summary">{f.summary}</span>
+              <span className="card-summary" data-full-text={f.summary}>{f.summary}</span>
               {parent && (
-                <span className="card-parent" title={parent.fields.summary}>
+                <span className="card-parent" data-full-text={`${parent.key} ${parent.fields.summary}`}>
                   ↳ {parent.key} {parent.fields.summary}
                 </span>
               )}
@@ -260,7 +252,7 @@ function Column({ stage, result, delay, onOpen, draggable, dropState, isOver, dr
             </button>
           );
         })}
-        {result.total > result.issues.length && (
+        {result && result.total > result.issues.length && (
           <div className="column-more">仅显示前 {result.issues.length} 条，请用筛选缩小范围</div>
         )}
       </div>

@@ -3,6 +3,7 @@ import { STAGES, type StageId } from '../lib/stages';
 import type { NamedRef, Version } from '../lib/types';
 import { isDefaultFilter } from '../lib/filterPrefs';
 import { NO_VERSION, quickVersions, shortDate, versionGroups } from '../lib/versions';
+import { PersonFilter, type FilterPerson } from './PersonFilter';
 
 export interface FilterState {
   text: string;
@@ -11,6 +12,8 @@ export interface FilterState {
   version: string;
   stages: StageId[];
   onlyMine: boolean;
+  /** 经办人、开发人员或测试人员任一匹配；与 onlyMine 互斥 */
+  people: FilterPerson[];
   hideOldClosed: boolean;
   types: string[];
 }
@@ -21,6 +24,7 @@ export const DEFAULT_FILTER: FilterState = {
   version: '',
   stages: [],
   onlyMine: false,
+  people: [],
   hideOldClosed: true,
   types: [],
 };
@@ -98,7 +102,8 @@ export function FilterBar({ value, onChange, components, versions, showStages = 
             {s.name}
           </button>
         ))}
-      <button className="chip" aria-pressed={value.onlyMine} onClick={() => onChange({ ...value, onlyMine: !value.onlyMine })}>
+      <PersonFilter value={value.people} onlyMine={value.onlyMine} onChange={people => onChange({ ...value, people, onlyMine: false })} />
+      <button className="chip" aria-pressed={value.onlyMine} onClick={() => onChange({ ...value, onlyMine: !value.onlyMine, people: [] })}>
         只看我的
       </button>
       <button

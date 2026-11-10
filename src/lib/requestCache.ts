@@ -3,15 +3,16 @@ import type { AsyncState } from './useAsync';
 
 interface Entry { promise: Promise<unknown>; expires: number; controller: AbortController; consumers: number; settled: boolean }
 const cache = new Map<string, Entry>();
-export function clearReadCache() { cache.clear(); }
+export function clearReadCache(predicate: (key: string) => boolean = () => true) { for (const key of cache.keys()) if (predicate(key)) cache.delete(key); }
+if (typeof window !== 'undefined') window.addEventListener('wb-session-ended', () => clearReadCache());
 export function readCached<T>(key: string, ttl: number, load: (signal: AbortSignal) => Promise<T>, signal: AbortSignal): Promise<T> {
   const old = cache.get(key);
-  if (old && old.expires > Date.now()) return subscribe(old, signal) as Promise<T>;
+  if (old && (!old.settled || old.expires > Date.now())) return subscribe(old, signal) as Promise<T>;
   const controller = new AbortController();
   const entry: Entry = { expires: Date.now() + ttl, controller, consumers: 0, settled: false, promise: Promise.resolve() as Promise<unknown> };
   entry.promise = load(controller.signal);
   cache.set(key, entry);
-  entry.promise.then(() => { entry.settled = true; }, () => { entry.settled = true; });
+  entry.promise.then(() => { entry.settled = true; entry.expires = Date.now() + ttl; }, () => { entry.settled = true; });
   entry.promise.catch(() => { if (cache.get(key) === entry) cache.delete(key); });
   return subscribe(entry, signal) as Promise<T>;
 }

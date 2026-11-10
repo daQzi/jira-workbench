@@ -26,11 +26,12 @@ function messageOf(body: unknown, status: number): string {
   return msgs.length ? msgs.join('；') : `请求失败（HTTP ${status}）`;
 }
 
-async function request<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+export interface ReadOptions { refresh?: boolean; background?: boolean }
+async function request<T>(method: string, url: string, body?: unknown, signal?: AbortSignal, options: ReadOptions = {}): Promise<T> {
   const res = await trackRequest(() => fetch(url, {
     method,
     credentials: 'same-origin',
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(options.refresh ? { 'X-WB-Refresh': '1' } : {}), ...(options.background ? { 'X-WB-Priority': 'background' } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
   }), method !== 'GET');
@@ -39,12 +40,14 @@ async function request<T>(method: string, url: string, body?: unknown, signal?: 
   if (res.status === 202 && (data as { pending?: boolean } | null)?.pending === true) {
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
     await new Promise(resolve => setTimeout(resolve, 250));
-    return request<T>(method, url, body, signal);
+    return request<T>(method, url, body, signal, options);
   }
   if (!res.ok) {
-    if (res.status === 401 && !url.startsWith('/api/login')) onUnauthorized?.();
+    if (res.status === 401 && !url.startsWith('/api/login')) { window.dispatchEvent(new Event('wb-session-ended')); onUnauthorized?.(); }
     throw new ApiError(res.status, messageOf(data, res.status));
   }
+  if (url.startsWith('/api/jira/search?') && data) data.fetchedAt = Number(res.headers.get('x-wb-fetched-at')) || Date.now();
+  if (url === '/api/logout') window.dispatchEvent(new Event('wb-session-ended'));
   return data as T;
 }
 
@@ -116,6 +119,7 @@ export const api = {
   login: (username: string, password: string) => writeOnce('login', () => request<{ name: string }>('POST', '/api/login', { username, password })),
   logout: () => request<{ ok: boolean }>('POST', '/api/logout'),
   me: () => request<Me>('GET', '/api/me'),
+  cacheStatus: (project: string, signal?: AbortSignal) => request<{ revision: string }>('GET', `/api/cache/status?${new URLSearchParams({ project })}`, undefined, signal),
   settings: () => request<ConnSettings>('GET', '/api/settings'),
   saveSettings: (input: ConnSettingsInput) => writeOnce(`settings:${JSON.stringify(input)}`, () => request<ConnSettings>('PUT', '/api/settings', input)),
 
@@ -123,14 +127,14 @@ export const api = {
   project: (key: string, signal?: AbortSignal) => jira<ProjectDetail>(`project/${encodeURIComponent(key)}`, signal),
   priorities: (signal?: AbortSignal) => jira<NamedRef[]>('priority', signal),
 
-  search(jql: string, opts: { startAt?: number; maxResults?: number; fields: string[] }, signal?: AbortSignal) {
+  search(jql: string, opts: { startAt?: number; maxResults?: number; fields: string[] } & ReadOptions, signal?: AbortSignal) {
     const q = new URLSearchParams({
       jql,
       startAt: String(opts.startAt ?? 0),
       maxResults: String(opts.maxResults ?? 50),
       fields: opts.fields.join(','),
     });
-    return jira<SearchResult>(`search?${q}`, signal);
+    return request<SearchResult>('GET', `/api/jira/search?${q}`, undefined, signal, opts);
   },
 
   issue: (key: string, signal?: AbortSignal) =>
@@ -145,6 +149,9 @@ export const api = {
   editMeta: (key: string) => jira<{ fields: FieldMetaMap }>(`issue/${enc(key)}/editmeta`).then((r) => r.fields ?? {}),
   transitions: (key: string) =>
     jira<{ transitions: Transition[] }>(`issue/${enc(key)}/transitions?expand=transitions.fields`).then((r) => r.transitions),
+  /** 筛选时搜索用户；包含停用账号，便于查询历史任务。 */
+  searchUsers: (query: string, signal?: AbortSignal) =>
+    jira<JiraUser[]>(`user/search?${new URLSearchParams({ username: query, maxResults: '20', includeActive: 'true', includeInactive: 'true' })}`, signal),
   assignableUsers: (opts: { project?: string; issueKey?: string; query: string }) => {
     const q = new URLSearchParams({ username: opts.query, maxResults: '20' });
     if (opts.issueKey) q.set('issueKey', opts.issueKey);

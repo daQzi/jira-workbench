@@ -50,6 +50,8 @@ export interface Issue {
 }
 
 export interface SearchResult {
+  /** 本地代理实际读取时间，复用缓存时保持原时间。 */
+  fetchedAt?: number;
   startAt: number;
   maxResults: number;
   total: number;

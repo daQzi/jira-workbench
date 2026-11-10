@@ -38,7 +38,7 @@ export function VersionTags({ versions, max = 2, empty = <span className="muted"
   if (!names.length) return <>{empty}</>;
   const more = names.length - max;
   return (
-    <span className="version-tags" title={names.join('\n')}>
+    <span className="version-tags" data-full-text={names.join('\n')}>
       {names.slice(0, max).map((n) => (
         <span key={n} className="version-tag">
           {n}

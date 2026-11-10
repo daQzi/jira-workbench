@@ -68,6 +68,7 @@ export function TreeView({ projectKey, filter, mode, selectedKey, onOpen, onCrea
         text: filter.text,
         stages: filter.stages,
         onlyMine: filter.onlyMine,
+        people: filter.people.map(p => p.name),
         recentClosedDays: filter.hideOldClosed ? 30 : undefined,
         closedStatuses: CLOSED_STATUSES,
       }, `${({updated:'updated',due:'due',priority:'priority',key:'key',created:'created'}[list.sort])} ${list.direction.toUpperCase()}`),
@@ -289,7 +290,7 @@ function Row({ issue, child, delay = 0, selected, onOpen, onChanged, onAddChild,
           )}
           <TypeBadge type={f.issuetype.name} />
           <span className="mono muted issue-key">{issue.key}</span>
-          <span className="summary" title={f.summary}>
+          <span className="summary" data-full-text={f.summary}>
             {f.summary}
           </span>
           {toggle && <span className="child-count">{toggle.count}</span>}

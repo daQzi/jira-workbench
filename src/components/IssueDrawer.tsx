@@ -187,7 +187,7 @@ function DrawerContent({ issue, children, jiraBaseUrl, currentProject, onSwitchP
           {parents.length > 0 && (
             <span className="crumb-parents">
               {parents.map((p) => (
-                <button key={p.key} className="crumb-parent" onClick={() => onOpen(p.key)} title={`所属需求：${p.key} ${p.fields.summary}`}>
+                <button key={p.key} className="crumb-parent" onClick={() => onOpen(p.key)} data-full-text={`所属需求：${p.key} ${p.fields.summary}`}>
                   <span aria-hidden="true">↑</span>
                   <span className="mono">{p.key}</span>
                   <span className="crumb-summary">{p.fields.summary}</span>
@@ -269,7 +269,7 @@ function DrawerContent({ issue, children, jiraBaseUrl, currentProject, onSwitchP
                       <button className="link-item" onClick={() => onOpen(c.key)}>
                         <TypeBadge type={c.fields.issuetype.name} />
                         <span className="mono muted">{c.key}</span>
-                        <span className="summary">{c.fields.summary}</span>
+                        <span className="summary" data-full-text={`${c.key} ${c.fields.summary}`}>{c.fields.summary}</span>
                         <span style={{ fontSize: 12 }}>{userName(c.fields.assignee) || <span className="muted">未分配</span>}</span>
                         <StatusPill status={c.fields.status.name} />
                       </button>
@@ -415,7 +415,7 @@ function LinkRow({ label, issue, onOpen }: { label: string; issue: LinkedIssue; 
       <span className="rel">{label}</span>
       <TypeBadge type={issue.fields.issuetype.name} />
       <span className="mono muted">{issue.key}</span>
-      <span className="summary">{issue.fields.summary}</span>
+      <span className="summary" data-full-text={`${issue.key} ${issue.fields.summary}`}>{issue.fields.summary}</span>
       <StatusPill status={issue.fields.status.name} />
     </button>
   );

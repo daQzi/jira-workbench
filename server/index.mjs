@@ -11,12 +11,17 @@ import { checkWrite as checkWritePolicy, fileResponseHeaders, isAttachmentUpload
 import { configureLlm, llmStatus, splitDaily } from './llm.mjs';
 import { createSessionStore } from './sessionStore.mjs';
 import { createReadCache, readTtl } from './read-cache.mjs';
+import { createJiraScheduler, readProjects, writeProjects } from './jira-scheduler.mjs';
 import { DEFAULT_JIRA_BASE_URL, DEFAULT_LLM, isLocalRequest, jiraOrDefault, maskKey, parseSettingsInput, readJson, saveSettings } from './settings.mjs';
 
 export { DEFAULT_JIRA_BASE_URL };
 
 // 运行配置：命令行启动时取环境变量；桌面端通过 startServer(opts) 传入
-const activeJiraReads = new Map();
+let jiraScheduler = createJiraScheduler();
+const cacheEpoch = randomBytes(8).toString('hex');
+let cacheRevision = 0;
+let allProjectsRevision = 0;
+const projectRevisions = new Map();
 let JIRA_BASE_URL = '';
 let PORT = 8787;
 const HOST = '127.0.0.1';
@@ -140,25 +145,13 @@ function getSession(req) {
   return { sid, ...s, ref: s };
 }
 
-/** 同一 Jira 会话里取消已被替代的读请求，避免慢请求继续占用旧版 Jira 的连接。 */
-function registerRead(key, external) {
-  const previous = activeJiraReads.get(key);
-  if (previous && !previous.signal.aborted) return null;
-  const ctrl = new AbortController();
-  const abort = () => ctrl.abort(external?.reason);
-  external?.addEventListener('abort', abort, { once: true });
-  activeJiraReads.set(key, ctrl);
-  const timer = AbortSignal.timeout(JIRA_TIMEOUT_MS);
-  const timedAbort = () => ctrl.abort(timer.reason);
-  timer.addEventListener('abort', timedAbort, { once: true });
-  return ctrl;
-}
-function finishRead(key, ctrl) {
-  if (ctrl && activeJiraReads.get(key) === ctrl) activeJiraReads.delete(key);
-}
 async function jiraFetch(jar, pathAndQuery, init = {}) {
-  const res = await fetch(JIRA_BASE_URL + pathAndQuery, {
-    ...init,
+  const { priority = (init.method && init.method !== 'GET' ? 0 : 1), signal, ...options } = init;
+  const target = JIRA_BASE_URL;
+  return jiraScheduler.run(async () => {
+    const timeout = AbortSignal.timeout(JIRA_TIMEOUT_MS);
+    const res = await fetch(target + pathAndQuery, {
+    ...options,
     headers: {
       Accept: 'application/json',
       // Jira 6 对非 GET 请求做 XSRF 校验，REST 调用需带此头
@@ -167,10 +160,41 @@ async function jiraFetch(jar, pathAndQuery, init = {}) {
       ...(init.headers || {}),
     },
     redirect: 'manual',
-    signal: init.signal ?? AbortSignal.timeout(JIRA_TIMEOUT_MS),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
   absorbSetCookies(jar, res);
-  return res;
+    const buf = await res.arrayBuffer();
+    return new Response([204, 205, 304].includes(res.status) ? null : buf, { status: res.status, statusText: res.statusText, headers: res.headers });
+  }, { signal, priority });
+}
+
+function dataRevision(project) {
+  return project ? `${cacheEpoch}:${allProjectsRevision}:${projectRevisions.get(project.toUpperCase()) || 0}` : `${cacheEpoch}:${cacheRevision}`;
+}
+function invalidateJira(projects) {
+  cacheRevision++;
+  if (!projects?.length) allProjectsRevision = cacheRevision;
+  else for (const project of projects) projectRevisions.set(project, cacheRevision);
+  readCache.invalidate(path => {
+    const scope = readProjects(path);
+    return scope === null || (scope.length && (!projects?.length || scope.some(p => projects.includes(p))));
+  });
+}
+async function readJira(session, sub, { signal, refresh = false, priority = 1 } = {}) {
+  const ttl = readTtl(sub.split('?')[0]);
+  if (!ttl) return jiraFetch(session.cookies, `/rest/api/2/${sub}`, { signal, priority });
+  const projects = readProjects(`/rest/api/2/${sub}`);
+  const revision = () => projects === null ? String(cacheRevision) : projects.map(dataRevision).join(',');
+  const generation = revision();
+  const value = await readCache.get(session.sid, `/rest/api/2/${sub}`, ttl, async sharedSignal => {
+    const upstream = await jiraFetch(session.cookies, `/rest/api/2/${sub}`, { signal: sharedSignal, priority });
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    const contentType = upstream.headers.get('content-type') || '';
+    if (upstream.ok && contentType.includes('json')) JSON.parse(buf.toString());
+    return { status: upstream.status, buf, contentType };
+  }, { signal, refresh });
+  if (generation !== revision()) throw Object.assign(new Error('数据已发生变更，请重新加载'), { status: 409 });
+  return new Response([204, 205, 304].includes(value.status) ? null : value.buf, { status: value.status, headers: { 'Content-Type': value.contentType, 'X-WB-Fetched-At': String(value.fetchedAt || Date.now()) } });
 }
 
 async function handleLogin(req, res) {
@@ -328,6 +352,7 @@ async function handleJiraProxy(req, res, url) {
   const sub = url.pathname.slice('/api/jira/'.length);
   if (sub.includes('..') || sub.includes('//')) return sendError(res, 403, `不允许访问的接口：${sub}`);
   const init = { method: req.method, headers: {} };
+  let changedProjects = null;
   if (req.method === 'GET') {
     if (!READ_PREFIXES.some((p) => sub === p || sub.startsWith(p))) {
       return sendError(res, 403, `不允许访问的接口：${sub}`);
@@ -362,6 +387,7 @@ async function handleJiraProxy(req, res, url) {
       if (!lr.ok) return sendError(res, lr.status === 404 ? 404 : 502, `链接不存在或无法读取（HTTP ${lr.status}）`);
       const link = await lr.json().catch(() => null);
       const ends = { inwardIssue: { key: link?.inwardIssue?.key ?? null }, outwardIssue: { key: link?.outwardIssue?.key ?? null } };
+      changedProjects = writeProjects(`/rest/api/2/${sub}`, ends);
       const denied = checkWritePolicy({ allowWrite: ALLOW_WRITE, writeProjects: WRITE_PROJECTS }, req.method, sub, ends.inwardIssue.key && ends.outwardIssue.key ? ends : null);
       if (denied) return sendError(res, denied.status, denied.msg);
       console.log(`[write] ${s.user} DELETE ${sub} (${ends.inwardIssue.key} -> ${ends.outwardIssue.key})`);
@@ -385,32 +411,33 @@ async function handleJiraProxy(req, res, url) {
       init.body = raw;
       init.headers['Content-Type'] = 'application/json';
     }
+    if (!changedProjects) changedProjects = writeProjects(`/rest/api/2/${sub}`, body);
+    if (!changedProjects && owned) changedProjects = [owned.key.split('-')[0].toUpperCase()];
     if (!unlinkId && !owned) console.log(`[write] ${s.user} ${req.method} ${sub}`);
   }
-  // 元数据合并重复请求并短期缓存，普通列表也仅保留极短 TTL。
-  // 响应在本地会话内转发，不给浏览器设置公共 HTTP 缓存；写操作不进入这里。
   if (req.method === 'GET') {
-    const ttl = readTtl(sub);
-    if (ttl) {
-      const readKey = `${s.sid}\0${sub}${url.search}`;
-      const ctrl = registerRead(readKey, req.signal);
-      if (!ctrl) {
-        res.writeHead(202, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-WB-Cache': 'shared' });
-        return res.end(JSON.stringify({ pending: true }));
-      }
-      const cached = await readCache.get(s.sid, `/rest/api/2/${sub}${url.search}`, ttl, async () => {
-        const upstream = await jiraFetch(s.cookies, `/rest/api/2/${sub}${url.search}`);
-        const buf = Buffer.from(await upstream.arrayBuffer());
-        const contentType = upstream.headers.get('content-type') || '';
-        return { status: upstream.status, buf, contentType };
-      }).finally(() => finishRead(readKey, ctrl));
-      if (cached.status === 401) dropSession(s.sid);
-      if (!cached.contentType.includes('json') && cached.buf.length) return sendError(res, cached.status >= 400 ? cached.status : 502, `Jira 返回非 JSON 响应（HTTP ${cached.status}）`);
-      return res.writeHead(cached.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-WB-Cache': 'shared' }), res.end(cached.buf);
-    }
+    const ctrl = new AbortController();
+    const disconnect = () => { if (!res.writableEnded) ctrl.abort(); };
+    res.once('close', disconnect);
+    try {
+      const upstream = await readJira(s, `${sub}${url.search}`, {
+        signal: ctrl.signal,
+        refresh: req.headers['x-wb-refresh'] === '1',
+        priority: req.headers['x-wb-priority'] === 'background' ? 2 : 1,
+      });
+      if (upstream.status === 401) dropSession(s.sid);
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      if (!(upstream.headers.get('content-type') || '').includes('json') && buf.length) return sendError(res, upstream.status >= 400 ? upstream.status : 502, `Jira 返回非 JSON 响应（HTTP ${upstream.status}）`);
+      if (ctrl.signal.aborted) return;
+      res.writeHead(upstream.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-WB-Fetched-At': upstream.headers.get('x-wb-fetched-at') || String(Date.now()) });
+      return res.end(buf);
+    } finally { res.off('close', disconnect); }
   }
   const search = req.method === 'DELETE' && sub.startsWith('attachment/') ? '' : url.search;
-  const jr = await jiraFetch(s.cookies, `/rest/api/2/${sub}${search}`, init);
+  let jr;
+  try { jr = await jiraFetch(s.cookies, `/rest/api/2/${sub}${search}`, init); }
+  catch (error) { invalidateJira(changedProjects); throw error; }
+  if (jr.ok || jr.status >= 500) invalidateJira(changedProjects);
   if (jr.status === 401) dropSession(s.sid);
   const buf = Buffer.from(await jr.arrayBuffer());
   const ct = jr.headers.get('content-type') || '';
@@ -419,7 +446,6 @@ async function handleJiraProxy(req, res, url) {
     return sendError(res, jr.status >= 400 ? jr.status : 502, `Jira 返回非 JSON 响应（HTTP ${jr.status}）`);
   }
   res.writeHead(jr.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-  if (req.method !== 'GET') readCache.clear();
   res.end(buf);
 }
 
@@ -467,6 +493,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/mcp/')) return await mcp.manage(req, res, url, getSession(req));
     if (url.pathname === '/api/login' && req.method === 'POST') return await handleLogin(req, res);
     if (url.pathname === '/api/logout' && req.method === 'POST') return await handleLogout(req, res);
+    if (url.pathname === '/api/cache/status' && req.method === 'GET') {
+      if (!getSession(req)) return sendError(res, 401, '未登录');
+      return sendJson(res, 200, { revision: dataRevision(url.searchParams.get('project')), scheduler: jiraScheduler.stats() });
+    }
     if (url.pathname === '/api/me' && req.method === 'GET') return await handleMe(req, res);
     // 桌面端用来识别已在运行的实例
     if (url.pathname === '/api/ping') return sendJson(res, 200, { app: 'jira-workbench' });
@@ -488,9 +518,10 @@ const server = http.createServer(async (req, res) => {
 
 /**
  * 启动代理。port=0 时由系统分配；返回实际监听的地址。
- * @param {{jiraBaseUrl: string, port?: number, allowWrite?: boolean, writeProjects?: string[], serveDist?: boolean, distDir?: string, llm?: object, sessionDir?: string, settingsFile?: string}} opts
+ * @param {{jiraBaseUrl: string, port?: number, allowWrite?: boolean, writeProjects?: string[], serveDist?: boolean, distDir?: string, llm?: object, sessionDir?: string, settingsFile?: string, jiraConcurrency?: number}} opts
  */
 export async function startServer(opts) {
+  jiraScheduler = createJiraScheduler({ concurrency: opts.jiraConcurrency ?? Number(process.env.WB_JIRA_CONCURRENCY || 2) });
   JIRA_BASE_URL = jiraOrDefault(opts.jiraBaseUrl);
   SETTINGS_FILE = opts.settingsFile || null;
   LLM_OPTS = { ...(opts.llm || {}) };
@@ -504,6 +535,7 @@ export async function startServer(opts) {
   configureLlm(LLM_OPTS);
   sessions.clear();
   readCache.clear();
+  cacheRevision++; allProjectsRevision = cacheRevision; projectRevisions.clear();
   store = opts.sessionDir ? createSessionStore(opts.sessionDir) : null;
   if (store) for (const [sid, s] of store.load(SESSION_IDLE_MS)) sessions.set(sid, s);
   await mcp?.close();
@@ -520,12 +552,20 @@ export async function startServer(opts) {
         if (denied) throw Object.assign(new Error(denied.msg), { status: denied.status, code: 'FORBIDDEN' });
       }
       const upload = body instanceof FormData;
-      const r = await jiraFetch(session.cookies, `/rest/api/2/${sub}`, {
+      if (method === 'GET') {
+        const r = await readJira(session, sub);
+        if (r.status === 401) dropSession(session.sid);
+        const result = await r.json().catch(() => { throw Object.assign(new Error('Jira 返回非 JSON 响应'), { status: 502 }); });
+        if (!r.ok) throw Object.assign(new Error(result?.errorMessages?.join('；') || `Jira HTTP ${r.status}`), { status: r.status, code: r.status === 401 ? 'AUTH_REQUIRED' : 'JIRA_ERROR' });
+        return result;
+      }
+      let r;
+      try { r = await jiraFetch(session.cookies, `/rest/api/2/${sub}`, {
         method,
         headers: upload ? { 'X-Atlassian-Token': 'nocheck' } : body !== undefined ? { 'Content-Type': 'application/json' } : {},
         ...(body !== undefined ? { body: upload ? body : JSON.stringify(body) } : {}),
-      });
-      if (method !== 'GET') readCache.clear();
+      }); } catch (error) { invalidateJira(writeProjects(`/rest/api/2/${sub}`, body)); throw error; }
+      if (r.ok || r.status >= 500) invalidateJira(writeProjects(`/rest/api/2/${sub}`, body));
       const result = r.status === 204 ? null : await r.json().catch(() => { throw Object.assign(new Error('Jira 返回非 JSON 响应'), { status: 502 }); });
       if (r.status === 401) dropSession(session.sid);
       if (!r.ok) throw Object.assign(new Error([...(result?.errorMessages || []), ...Object.values(result?.errors || {})].join('；') || `Jira HTTP ${r.status}`), { status: r.status, code: r.status === 401 ? 'AUTH_REQUIRED' : 'JIRA_ERROR' });
