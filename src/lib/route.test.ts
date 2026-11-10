@@ -5,7 +5,7 @@ describe('route', () => {
   it('解析项目、页面和问题', () => {
     expect(parseHash('#/AGENT/board?issue=AGENT-1')).toEqual({ project: 'AGENT', page: 'board', issue: 'AGENT-1' });
     expect(parseHash('#/AGENT')).toEqual({ project: 'AGENT', page: 'me', issue: null });
-    expect(parseHash('#/ALL/review')).toEqual({project:null,page:'review',issue:null});
+    expect(parseHash('#/ALL/review')).toEqual({project:null,page:'hours',issue:null,tab:'review'});
     expect(parseHash('#/ALL/notifications')).toEqual({project:null,page:'notifications',issue:null});
     expect(parseHash('#/ALL/versions')).toEqual({project:null,page:'me',issue:null});
     expect(parseHash('#/ALL/hours')).toEqual({ project: null, page: 'hours', issue: null });
@@ -24,6 +24,14 @@ describe('route', () => {
       expect(toHash({ project: r.project ?? null, page: r.page, issue: r.issue })).toBe(h);
     }
     expect(toHash({ project: null, page: 'board', issue: null })).toBe('#/ALL/me');
+  });
+
+  it('旧工时检查地址统一到工时标签，保留项目与问题', () => {
+    const old = parseHash('#/AGENT/review?issue=AGENT-1');
+    expect(toHash({ ...old, project: old.project ?? null })).toBe('#/AGENT/hours?tab=review&issue=AGENT-1');
+    expect(parseHash('#/review')).toEqual({ project: undefined, page: 'hours', issue: null, tab: 'review' });
+    expect(parseHash('#/ALL/hours?tab=review')).toEqual({ project: null, page: 'hours', issue: null, tab: 'review' });
+    expect(toHash({ project: 'AGENT', page: 'board', issue: null, tab: 'review' })).toBe('#/AGENT/board');
   });
 
   it('上次项目：不记 ALL；选择顺序', () => {

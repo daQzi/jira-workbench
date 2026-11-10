@@ -1,7 +1,7 @@
 // 路由写在 hash 里：#/<项目|ALL>/<页面>?issue=KEY，刷新/分享可还原。
 // 当前项目是全局维度，所有页面都按它查询；ALL 表示跨项目（只有个人页面可用）。
-export type Page = 'me' | 'hours' | 'tree' | 'flat' | 'board' | 'mcp' | 'review' | 'versions' | 'notifications';
-export const PAGES: Page[] = ['me', 'hours', 'tree', 'flat', 'board', 'mcp', 'review', 'versions', 'notifications'];
+export type Page = 'me' | 'hours' | 'tree' | 'flat' | 'board' | 'mcp' | 'versions' | 'notifications';
+export const PAGES: Page[] = ['me', 'hours', 'tree', 'flat', 'board', 'mcp', 'versions', 'notifications'];
 /** 只能在具体项目下使用的页面 */
 export const PROJECT_PAGES: Page[] = ['tree', 'flat', 'board', 'versions'];
 export const ALL = 'ALL';
@@ -11,6 +11,8 @@ export interface Route {
   project: string | null | undefined;
   page: Page;
   issue: string | null;
+  /** 页内标签，如工时检查；旧 review 地址规范化为 hours?tab=review */
+  tab?: string | null;
 }
 
 const isPage = (s: string | undefined): s is Page => !!s && (PAGES as string[]).includes(s);
@@ -18,19 +20,25 @@ const isPage = (s: string | undefined): s is Page => !!s && (PAGES as string[]).
 export function parseHash(hash: string): Route {
   const [path, query = ''] = hash.replace(/^#\/?/, '').split('?');
   const [a, b] = path.split('/').map((x) => (x ? decodeURIComponent(x) : x));
-  const issue = new URLSearchParams(query).get('issue');
+  const params = new URLSearchParams(query);
+  const issue = params.get('issue');
+  const tab = a === 'review' || b === 'review' || params.get('tab') === 'review' ? { tab: 'review' as const } : {};
   // 旧地址 #/me、#/hours：页面保留，项目待补
-  if (!a || isPage(a)) return { project: undefined, page: isPage(a) ? a : 'me', issue };
+  if (!a || isPage(a) || a === 'review') return { project: undefined, page: a === 'review' ? 'hours' : isPage(a) ? a : 'me', issue, ...(a === 'review' || a === 'hours' ? tab : {}) };
   const project = a.toUpperCase() === ALL ? null : a;
-  let page: Page = isPage(b) ? b : 'me';
+  let page: Page = b === 'review' ? 'hours' : isPage(b) ? b : 'me';
   if (project === null && PROJECT_PAGES.includes(page)) page = 'me';
-  return { project, page, issue };
+  return { project, page, issue, ...(page === 'hours' ? tab : {}) };
 }
 
-export function toHash(r: { project: string | null; page: Page; issue: string | null }): string {
+export function toHash(r: { project: string | null; page: Page; issue: string | null; tab?: string | null }): string {
   const page = r.project === null && PROJECT_PAGES.includes(r.page) ? 'me' : r.page;
   const base = `#/${r.project === null ? ALL : encodeURIComponent(r.project)}/${page}`;
-  return r.issue ? `${base}?issue=${encodeURIComponent(r.issue)}` : base;
+  const params = new URLSearchParams();
+  if (page === 'hours' && r.tab === 'review') params.set('tab', 'review');
+  if (r.issue) params.set('issue', r.issue);
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
 }
 
 // ---------- 上次使用的项目 ----------

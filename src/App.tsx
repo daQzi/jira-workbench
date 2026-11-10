@@ -13,11 +13,10 @@ import { TreeView } from './views/TreeView';
 import { BoardView } from './views/BoardView';
 import { MyWorkView } from './views/MyWorkView';
 import { sharedView } from './components/SavedViews';
-import { ReviewView } from './views/ReviewView';
+import { HoursWorkspace } from './views/HoursWorkspace';
 import { VersionView } from './views/VersionView';
 import { NotificationsView } from './views/NotificationsView';
 import { McpView } from './views/McpView';
-import { HoursView } from './views/HoursView';
 import { TypeBadge } from './components/Badges';
 import { loadFilter, saveFilter } from './lib/filterPrefs';
 import { CommandPalette } from './components/CommandPalette';
@@ -28,14 +27,21 @@ import { loadLastProject, parseHash, pickProject, PROJECT_PAGES, saveLastProject
 function useRoute(): [Route, (patch: Partial<Route>) => void] {
   const [route, setRoute] = useState(() => parseHash(location.hash));
   useEffect(() => {
-    const on = () => setRoute(parseHash(location.hash));
+    const on = () => {
+      const parsed = parseHash(location.hash);
+      if (/^#\/?(?:review|[^/?]+\/review)(?:[?]|$)/.test(location.hash) && parsed.project !== undefined) {
+        history.replaceState(null, '', toHash({ ...parsed, project: parsed.project }));
+      }
+      setRoute(parsed);
+    };
+    on();
     window.addEventListener('hashchange', on);
     return () => window.removeEventListener('hashchange', on);
   }, []);
   const update = useCallback((patch: Partial<Route>) => {
     const cur = parseHash(location.hash);
     const next = { ...cur, ...patch };
-    const hash = toHash({ project: next.project ?? null, page: next.page, issue: next.issue });
+    const hash = toHash({ project: next.project ?? null, page: next.page, issue: next.issue, tab: next.tab });
     // 补全旧地址/空地址时不留历史记录，避免「后退」回到无项目的地址又被补回来
     if (cur.project === undefined) history.replaceState(null, '', hash), setRoute(parseHash(hash));
     else location.hash = hash;
@@ -80,9 +86,9 @@ export function App() {
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
-const PAGE_LABEL: Record<Page, string> = { me: '我的工作台', hours: '我的工时', tree: '需求树', flat: '全部问题', board: '看板', mcp: 'MCP 服务', review: '工时检查与汇总', versions: '版本进展', notifications: '通知中心' };
+const PAGE_LABEL: Record<Page, string> = { me: '我的工作台', hours: '我的工时', tree: '需求树', flat: '全部问题', board: '看板', mcp: 'MCP 服务', versions: '版本进展', notifications: '通知中心' };
 const NAV: { label: string; pages: Page[] }[] = [
-  { label: '个人', pages: ['me', 'hours', 'review', 'notifications'] },
+  { label: '个人', pages: ['me', 'hours', 'notifications'] },
   { label: '项目', pages: ['tree', 'flat', 'board', 'versions'] },
   { label: '设置', pages: ['mcp'] },
 ];
@@ -123,7 +129,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
 
   // 快捷键 C：新建（输入框内不触发）
   useEffect(() => {
-    if (!writable || route.page === 'mcp') return;
+    if (!writable || !['tree', 'flat'].includes(route.page)) return;
     const on = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (e.key !== 'c' || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -220,11 +226,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
               {projectPage && '父子关系按「子项 blocks 需求」识别'}
             </div>
           </div>
-          {!projectPage && route.page !== 'mcp' && writable && (
-            <div className="topbar-actions">
-              <NewButton onCreate={createIn} />
-            </div>
-          )}
+
         </header>
 
         {projectPage && route.page !== 'versions' && pk && (
@@ -236,9 +238,11 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             showStages
             showTypes={route.page !== 'tree'}
           >
-            {writable ? (
-              <NewButton onCreate={createIn} defaultType={route.page === 'tree' ? '需求' : undefined} />
-            ) : (
+            {writable && route.page === 'tree' ? (
+              <button className="btn primary" title="快捷键 C" onClick={() => createIn('需求')}>＋ 新建需求</button>
+            ) : writable && route.page === 'flat' ? (
+              <NewButton onCreate={createIn} />
+            ) : !writable ? (
               <span
                 className="muted readonly-tag"
                 title={
@@ -249,17 +253,16 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
               >
                 工作台未开放此项目写入
               </span>
-            )}
+            ) : null}
           </FilterBar>
         )}
 
         <div className="content" style={projectPage ? undefined : { paddingTop: 16 }}>
           {route.page === 'mcp' && <McpView />}
-          {route.page === 'review' && <ReviewView projectKey={pk} onOpen={openIssue}/>}
+          {route.page === 'hours' && <HoursWorkspace key={pk ?? '*'} projectKey={pk} onOpen={openIssue} tab={route.tab === 'review' ? 'review' : 'report'} onTabChange={tab => go({ tab: tab === 'review' ? 'review' : null })} />}
           {route.page === 'versions' && pk && <VersionView key={pk} projectKey={pk} onOpen={openIssue}/>}
           {route.page === 'notifications' && <NotificationsView projectKey={pk} onOpen={openIssue} onMcp={()=>go({page:'mcp',issue:null})}/>}
           {route.page === 'me' && <MyWorkView projectKey={pk} onOpen={openIssue} />}
-          {route.page === 'hours' && <HoursView projectKey={pk} onOpen={openIssue} />}
           {projectPage && pk && project.error && <ErrorState error={project.error} onRetry={project.reload} />}
           {projectPage && pk && !project.error && !project.data && <Loading />}
           {projectPage && pk && project.data && (route.page === 'tree' || route.page === 'flat') && (
@@ -340,7 +343,7 @@ function NewButton({ onCreate, defaultType }: { onCreate: (typeName?: string) =>
   return (
     <span className="split">
       <button className="btn primary" title="快捷键 C" onClick={() => onCreate(defaultType)}>
-        ＋ 新建{defaultType ? defaultType : ''}
+        ＋ 新建{defaultType ?? '问题'}
       </button>
       <button
         className="btn primary caret-btn"

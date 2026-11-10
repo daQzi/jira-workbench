@@ -918,3 +918,11 @@ body { background:radial-gradient(900px 420px at 90% -10%,color-mix(in srgb,var(
 .workbench-resize-handle { width:28px;height:28px;right:3px;bottom:3px;cursor:nwse-resize;opacity:.42;background:transparent; }
 .workbench-resize-handle span { position:absolute;right:4px;bottom:4px;width:12px;height:12px;background:repeating-linear-gradient(135deg,transparent 0 3px,var(--ink-3) 3px 4px,transparent 4px 6px);clip-path:polygon(100% 0,100% 100%,0 100%); }
 .workbench-card:hover .workbench-resize-handle,.workbench-resize-handle:focus-visible { opacity:.85;background:transparent; }
+
+/* 工时统一入口：报表与检查汇总在同一上下文中切换。 */
+.hours-page-tabs { display:flex;align-items:center;gap:22px;border-bottom:1px solid var(--line);margin-bottom:20px; }
+.hours-page-tabs button { position:relative;border:0;background:transparent;color:var(--ink-2);padding:0 0 12px;font-size:14px; }
+.hours-page-tabs button[aria-selected='true'] { color:var(--ink);font-weight:600; }
+.hours-page-tabs button[aria-selected='true']::after { content:'';position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--accent);border-radius:2px 2px 0 0; }
+.hours-page-tabs button:hover { color:var(--accent); }
+.hours-workspace .review-page .workspace-intro { margin-top:0; }
