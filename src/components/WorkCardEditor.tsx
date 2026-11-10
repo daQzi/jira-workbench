@@ -45,7 +45,7 @@ export function WorkCardEditor({ card, issues, hourFields, user, canPreviewAll, 
       <label className="field"><span>到期结束日期</span><input aria-label="到期结束日期" className="input" type="date" value={draft.dueTo} onChange={e => set({ dueTo: e.target.value })}/></label>
       <label className="field"><span>卡片排序</span><select aria-label="卡片排序" className="select" value={draft.sort} onChange={e => set({ sort: e.target.value as WorkCard['sort'] })}><option value="updated">最近更新优先</option><option value="due">到期时间优先</option><option value="priority">优先级顺序（Jira ID 升序）</option></select></label>
       <label className="field"><span>显示条数</span><select aria-label="显示条数" className="select" value={draft.limit} onChange={e => set({ limit: Number(e.target.value) })}>{[3, 5, 8, 10].map(n => <option key={n} value={n}>{n} 条</option>)}</select></label>
-      <label className="field"><span>卡片宽度</span><select aria-label="卡片宽度" className="select" value={draft.width} onChange={e => set({ width: e.target.value as WorkCard['width'] })}><option value="half">半行</option><option value="full">整行</option></select></label>
+      <label className="field"><span>卡片宽度</span><select aria-label="卡片宽度" className="select" value={draft.width} onChange={e => set({ width: Number(e.target.value) as WorkCard['width'] })}><option value={1}>1 / 4 行</option><option value={2}>半行</option><option value={3}>3 / 4 行</option><option value={4}>整行</option></select></label>
       <p className="work-card-preview wide" role="status">{draft.relation === 'all' && !canPreviewAll ? '保存后查询当前项目内所有人；当前预览仅加载了与我相关的数据。' : `当前已加载数据匹配 ${selectCardIssues(issues, draft, hourFields, user).length} 条。`} 卡片跟随左上角的项目切换。</p>
     </form></>
   </Modal>;

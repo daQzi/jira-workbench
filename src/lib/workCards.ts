@@ -5,6 +5,10 @@ import { stageOf, STAGES, type StageId } from './stages';
 import { NO_VERSION, versionNames } from './versions';
 
 export const CARD_LIMIT = 20;
+export const CARD_WIDTHS = [1, 2, 3, 4] as const;
+export type CardWidth = typeof CARD_WIDTHS[number];
+export const clampCardWidth = (value: unknown): CardWidth => CARD_WIDTHS.includes(value as CardWidth) ? value as CardWidth : 2;
+export const clampCardHeight = (value: unknown): number | undefined => typeof value === 'number' && Number.isFinite(value) ? Math.round(Math.min(900, Math.max(200, value))) : undefined;
 export const RELATIONS = { mine: '与我相关', assignee: '我经办的', developer: '我开发的', tester: '我测试的', all: '项目内所有人' };
 export type Relation = keyof typeof RELATIONS;
 export interface WorkCard {
@@ -21,11 +25,13 @@ export interface WorkCard {
   dueTo: string;
   sort: 'updated' | 'due' | 'priority';
   limit: number;
-  width: 'half' | 'full';
+  width: CardWidth;
+  /** 手动高度；undefined 表示按内容自适应 */
+  height?: number;
   custom: boolean;
 }
 export function newCard(patch: Partial<WorkCard> = {}): WorkCard {
-  return { id: crypto.randomUUID(), title: '自定义清单', relation: 'mine', stages: [], types: [], priority: '', version: '', text: '', view: 'active', dueFrom: '', dueTo: '', sort: 'updated', limit: 5, width: 'half', custom: true, ...patch };
+  return { id: crypto.randomUUID(), title: '自定义清单', relation: 'mine', stages: [], types: [], priority: '', version: '', text: '', view: 'active', dueFrom: '', dueTo: '', sort: 'updated', limit: 5, width: 2, custom: true, ...patch };
 }
 export const CARD_TEMPLATES: { name: string; hint: string; patch: Partial<WorkCard> }[] = [
   { name: '待处理', hint: '与我相关 · 尚未开始', patch: { stages: ['todo'] } },
@@ -52,7 +58,7 @@ export function validCards(value: unknown): value is WorkCard[] {
       && ['priority', 'version', 'text', 'dueFrom', 'dueTo'].every(k => typeof c[k] === 'string')
       && (Object.hasOwn(WORK_VIEWS, c.view) || c.view === 'any' || c.view === 'due')
       && ['updated', 'due', 'priority'].includes(c.sort) && [3, 5, 8, 10].includes(c.limit)
-      && ['half', 'full'].includes(c.width) && typeof c.custom === 'boolean';
+      && CARD_WIDTHS.includes(c.width) && (c.height === undefined || (typeof c.height === 'number' && c.height >= 260 && c.height <= 900)) && typeof c.custom === 'boolean';
   });
 }
 function userIs(value: unknown, user: string): boolean { return !!value && typeof value === 'object' && (value as { name?: string }).name === user; }

@@ -204,12 +204,12 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         ))}
         {projects.error && <span className="muted">项目加载失败</span>}
         <div className="side-foot">
-          <span>{me.name}</span>
+          <ThemeToggle /><span>{me.name}</span>
           <button onClick={onLogout}>退出</button>
         </div>
       </nav>
 
-      <main className="main"><ThemeToggle />
+      <main className="main">
         <header className="topbar">
           <div className="title-block">
             <h1>{PAGE_LABEL[route.page]}</h1>

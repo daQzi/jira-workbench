@@ -12,5 +12,5 @@ export function ThemeToggle() {
     document.documentElement.style.colorScheme = theme;
     try { localStorage.setItem('wb.theme', theme); } catch { /* 外观记忆不可用不影响当前切换 */ }
   }, [theme]);
-  return <button className="theme-toggle" aria-label={`切换到${theme === 'light' ? '深色' : '浅色'}模式`} title={`切换到${theme === 'light' ? '深色' : '浅色'}模式`} onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')}><span aria-hidden="true">{theme === 'light' ? '☾' : '☀'}</span></button>;
+  return <button className="theme-toggle" aria-label={`切换到${theme === 'light' ? '深色' : '浅色'}模式`} title={`切换到${theme === 'light' ? '深色' : '浅色'}模式`} onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} aria-pressed={theme === 'dark'}><span aria-hidden="true">{theme === 'light' ? '☾' : '☀'}</span><span className="theme-label">{theme === 'light' ? '浅色' : '深色'}</span></button>;
 }
