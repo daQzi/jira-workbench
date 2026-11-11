@@ -746,9 +746,9 @@ span.edit-trigger { display: inline-block; min-width: 24px; }
 /* ---------- 全局请求反馈：读取不遮挡，写入锁定避免重复提交 ---------- */
 .request-top-progress { position: fixed; inset: 0 0 auto; height: 3px; z-index: 200; overflow: hidden; pointer-events: none; }
 .request-top-progress i { display: block; width: 36%; height: 100%; background: linear-gradient(90deg, transparent, var(--accent), #f6ab62, transparent); animation: request-slide 1.25s ease-in-out infinite; }
-.request-read-status { position: fixed; top: 14px; right: 24px; z-index: 80; display: flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid rgba(217, 209, 191, .8); border-radius: 999px; background: rgba(255, 253, 247, .94); color: var(--ink-2); box-shadow: 0 5px 20px -10px var(--navy); backdrop-filter: blur(10px); font-size: 12px; pointer-events: none; animation: fade .2s both; }
+.request-read-status { position: fixed; top: 14px; right: 24px; z-index: 80; display: flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 999px; background: color-mix(in srgb, var(--card) 94%, transparent); color: var(--ink-2); box-shadow: 0 5px 20px -10px var(--navy); backdrop-filter: blur(10px); font-size: 12px; pointer-events: none; animation: fade .2s both; }
 .request-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: request-pulse 1.2s ease-in-out infinite; }
-.request-write-mask { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 20px; background: rgba(244, 240, 230, .64); backdrop-filter: blur(3px); cursor: wait; animation: fade .15s both; }
+.request-write-mask { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, var(--ink) 24%, transparent); backdrop-filter: blur(3px); cursor: wait; animation: fade .15s both; }
 .request-write-card { width: min(310px, 92vw); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 28px 24px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); box-shadow: 0 24px 70px -20px rgba(29, 39, 51, .35); animation: rise .2s both; }
 .request-write-card strong { margin-top: 12px; font: 20px var(--font-display); letter-spacing: .08em; }
 .request-write-card > span { color: var(--ink-3); font-size: 12px; }
