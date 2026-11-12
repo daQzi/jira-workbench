@@ -66,6 +66,43 @@ function writeOnce<T>(key: string, run: () => Promise<T>): Promise<T> {
 const jiraWrite = <T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown) =>
   writeOnce(`${method}:${path}:${JSON.stringify(body)}`, () => request<T>(method, `/api/jira/${path}`, body));
 
+export interface FilterUserResult {
+  users: JiraUser[];
+  note?: string;
+}
+
+/** Jira 6 部署间人员目录权限不同；空结果或接口受限时按顺序兼容，避免并发扫描目录。 */
+async function filterUsers(project: string, query: string, signal?: AbortSignal): Promise<FilterUserResult> {
+  const term = query.trim();
+  const params = new URLSearchParams({ username: term, maxResults: '20' });
+  const paths = term ? [
+    { path: `user/search?${params}&includeActive=true&includeInactive=true`, projectOnly: false, picker: false },
+    { path: `user/picker?${new URLSearchParams({ query: term, maxResults: '20', showAvatar: 'false' })}`, projectOnly: false, picker: true },
+    { path: `user/assignable/search?${params}&${new URLSearchParams({ project })}`, projectOnly: true, picker: false },
+  ] : [{ path: `user/assignable/search?${params}&${new URLSearchParams({ project })}`, projectOnly: true, picker: false }];
+  const failures: string[] = [];
+  let succeeded = false;
+  for (const source of paths) {
+    if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+    try {
+      const body = await jira<unknown>(source.path, signal);
+      const rows = source.picker ? (body as { users?: unknown } | null)?.users : body;
+      if (!Array.isArray(rows) || rows.some(u => !u || typeof u.name !== 'string' || !u.name.trim() || (u.displayName != null && typeof u.displayName !== 'string'))) {
+        throw new Error('Jira 人员接口返回格式异常，请检查服务响应');
+      }
+      succeeded = true;
+      const users = [...new Map(rows.map(u => [u.name, { name: u.name, displayName: u.displayName || u.name }])).values()];
+      if (users.length) return { users, ...(source.projectOnly ? { note: '当前仅列出项目可分配人员，不包含全部历史人员' } : {}) };
+    } catch (error) {
+      // 身份、网络、服务故障和格式错误不能伪装成“没有匹配人员”。
+      if (!(error instanceof ApiError) || ![403, 404, 405].includes(error.status)) throw error;
+      failures.push(`HTTP ${error.status}：${error.message}`);
+    }
+  }
+  if (!succeeded) throw new Error(`人员搜索不可用：${failures.join('；')}`);
+  return { users: [], ...(failures.length ? { note: `部分人员搜索不可用，结果可能不完整：${failures.join('；')}` } : {}) };
+}
+
 export interface Me {
   name: string;
   jiraBaseUrl: string;
@@ -149,14 +186,15 @@ export const api = {
   editMeta: (key: string) => jira<{ fields: FieldMetaMap }>(`issue/${enc(key)}/editmeta`).then((r) => r.fields ?? {}),
   transitions: (key: string) =>
     jira<{ transitions: Transition[] }>(`issue/${enc(key)}/transitions?expand=transitions.fields`).then((r) => r.transitions),
+  filterUsers,
   /** 筛选时搜索用户；包含停用账号，便于查询历史任务。 */
   searchUsers: (query: string, signal?: AbortSignal) =>
     jira<JiraUser[]>(`user/search?${new URLSearchParams({ username: query, maxResults: '20', includeActive: 'true', includeInactive: 'true' })}`, signal),
-  assignableUsers: (opts: { project?: string; issueKey?: string; query: string }) => {
+  assignableUsers: (opts: { project?: string; issueKey?: string; query: string }, signal?: AbortSignal) => {
     const q = new URLSearchParams({ username: opts.query, maxResults: '20' });
     if (opts.issueKey) q.set('issueKey', opts.issueKey);
     else if (opts.project) q.set('project', opts.project);
-    return jira<JiraUser[]>(`user/assignable/search?${q}`);
+    return jira<JiraUser[]>(`user/assignable/search?${q}`, signal);
   },
 
   createIssue: (body: { fields: Record<string, unknown>; update?: Record<string, unknown> }) =>

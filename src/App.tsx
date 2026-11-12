@@ -259,6 +259,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
 
         {projectPage && route.page !== 'versions' && pk && (
           <FilterBar
+            projectKey={pk}
             value={filter}
             onChange={setFilter}
             components={project.data?.components ?? []}

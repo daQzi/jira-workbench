@@ -389,6 +389,8 @@ a { color: var(--t-req); }
 .person-filter-pop .avatar { width: 28px; height: 28px; white-space: nowrap; }
 .person-filter-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .person-filter-name small { display: block; font-size: 11px; }
+.person-filter-shortcuts { display:flex;gap:6px;margin:0 2px 9px; }
+.person-filter-shortcuts .chip[aria-pressed=true] { background:var(--accent-soft);border-color:var(--accent);color:var(--accent); }
 .person-filter-selection-head { display:flex;align-items:center;justify-content:space-between;font-size:12px;margin:0 2px 8px; }
 .person-filter-selection-head strong { font-weight:500; }
 .person-filter-selected { display:flex;gap:5px;flex-wrap:wrap;max-height:76px;overflow:auto;margin-bottom:8px; }

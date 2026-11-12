@@ -32,6 +32,7 @@ export const DEFAULT_FILTER: FilterState = {
 export const ALL_TYPES = ['需求', '编码任务', 'BUG及数据问题', '其他任务'];
 
 interface Props {
+  projectKey: string;
   value: FilterState;
   onChange: (v: FilterState) => void;
   components: NamedRef[];
@@ -41,7 +42,7 @@ interface Props {
   children?: React.ReactNode;
 }
 
-export function FilterBar({ value, onChange, components, versions, showStages = true, showTypes = false, children }: Props) {
+export function FilterBar({ projectKey, value, onChange, components, versions, showStages = true, showTypes = false, children }: Props) {
   // 关键字输入防抖，避免每个字都发一次 JQL
   const [text, setText] = useState(value.text);
   useEffect(() => setText(value.text), [value.text]);
@@ -102,7 +103,7 @@ export function FilterBar({ value, onChange, components, versions, showStages = 
             {s.name}
           </button>
         ))}
-      <PersonFilter value={value.people} onlyMine={value.onlyMine} onChange={people => onChange({ ...value, people, onlyMine: false })} />
+      <PersonFilter projectKey={projectKey} value={value.people} onlyMine={value.onlyMine} onChange={people => onChange({ ...value, people, onlyMine: false })} onMine={() => onChange({ ...value, people: [], onlyMine: true })} />
       <button className="chip" aria-pressed={value.onlyMine} onClick={() => onChange({ ...value, onlyMine: !value.onlyMine, people: [] })}>
         只看我的
       </button>
