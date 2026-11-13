@@ -105,6 +105,9 @@ export function cardSummary(c: WorkCard): string {
   ].filter(Boolean).join(' · ');
 }
 export function needsProjectIssues(cards: WorkbenchCard[]): boolean { return cards.some(c => !isWidget(c) && c.relation === 'all'); }
+export function cardPreviewCount(card: WorkCard): number {
+  return card.height ? Math.max(1, Math.min(card.limit, Math.floor((card.height - 96) / 64))) : card.limit;
+}
 export interface LegacyWorkView { id: string; name: string; prefs: { view: WorkView; text: string; version: string } }
 export function validLegacyViews(value: unknown): value is LegacyWorkView[] {
   return Array.isArray(value) && value.every(v => v && typeof v.id === 'string' && typeof v.name === 'string' && !!v.name.trim() && v.prefs && Object.hasOwn(WORK_VIEWS, v.prefs.view) && typeof v.prefs.text === 'string' && typeof v.prefs.version === 'string');

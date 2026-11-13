@@ -34,6 +34,7 @@ export function EditableField({ issueKey, id, meta, raw, children, onSaved, bloc
   const [value, setValue] = useState<FormValue | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const saving = useRef(false);
 
   useEffect(() => {
     if (editing && meta) setValue(fromJiraValue(id, meta, raw));
@@ -50,18 +51,21 @@ export function EditableField({ issueKey, id, meta, raw, children, onSaved, bloc
   if (!meta || !kind) return <>{children}</>;
 
   const save = async (next: FormValue | undefined = value) => {
+    if (saving.current) return;
     const r = editValue(id, meta, raw, next);
     if (r.kind === 'unchanged') return setEditing(false);
     if (r.kind === 'error') return toast(r.msg, 'error');
+    saving.current = true;
     setBusy(true);
     try {
-      await api.editIssue(issueKey, { [id]: r.value });
+      await api.editIssue(issueKey, { [id]: r.value }, { feedback: 'local' });
       toast(`已更新「${meta.name}」`);
       setEditing(false);
       onSaved();
     } catch (e) {
       toast(`保存「${meta.name}」失败：${(e as Error).message}`, 'error');
     } finally {
+      saving.current = false;
       setBusy(false);
     }
   };
@@ -100,11 +104,12 @@ export function EditableField({ issueKey, id, meta, raw, children, onSaved, bloc
     <div
       ref={ref}
       className={`inline-edit${block ? ' block' : ''}`}
+      aria-busy={busy}
       style={{ opacity: busy ? 0.6 : 1 }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.stopPropagation();
-          setEditing(false);
+          if (!saving.current) setEditing(false);
         } else if (e.key === 'Enter' && !e.nativeEvent.isComposing && kind !== 'user' && (!multiline || e.metaKey || e.ctrlKey)) {
           // 用户选择框自己处理回车（选中即保存）
           e.preventDefault();
@@ -112,6 +117,7 @@ export function EditableField({ issueKey, id, meta, raw, children, onSaved, bloc
         }
       }}
     >
+      <fieldset className="inline-edit-controls" disabled={busy}>
       {kind === 'user' ? (
         <UserPicker
           label={meta.name}
@@ -142,6 +148,7 @@ export function EditableField({ issueKey, id, meta, raw, children, onSaved, bloc
         </button>
         <span className="muted">{multiline ? '⌘/Ctrl+Enter 保存' : kind === 'user' ? '选中即保存' : INSTANT.has(kind) ? '选择即保存' : 'Enter 保存'} · Esc 取消</span>
       </div>
+      </fieldset>
     </div>
   );
 }

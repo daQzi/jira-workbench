@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { STAGES, type StageId } from '../lib/stages';
 import type { NamedRef, Version } from '../lib/types';
 import { isDefaultFilter } from '../lib/filterPrefs';
@@ -44,6 +44,9 @@ interface Props {
 
 export function FilterBar({ projectKey, value, onChange, components, versions, showStages = true, showTypes = false, children }: Props) {
   // 关键字输入防抖，避免每个字都发一次 JQL
+  const [more, setMore] = useState(false);
+  const moreId = useId();
+  const advancedCount = (value.component ? 1 : 0) + (showTypes ? value.types.length : 0) + (showStages ? value.stages.length : 0) + (!value.hideOldClosed ? 1 : 0);
   const [text, setText] = useState(value.text);
   useEffect(() => setText(value.text), [value.text]);
   useEffect(() => {
@@ -64,6 +67,27 @@ export function FilterBar({ projectKey, value, onChange, components, versions, s
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
+      {!!versions?.length && <VersionFilter value={value.version} versions={versions} onChange={(version) => onChange({ ...value, version })} />}
+      <PersonFilter projectKey={projectKey} value={value.people} onlyMine={value.onlyMine} onChange={people => onChange({ ...value, people, onlyMine: false })} onMine={() => onChange({ ...value, people: [], onlyMine: true })} />
+      <button className="chip" aria-pressed={value.onlyMine} onClick={() => onChange({ ...value, onlyMine: !value.onlyMine, people: [] })}>
+        只看我的
+      </button>
+      <button className="chip" aria-expanded={more} aria-controls={moreId} onClick={() => setMore(open => !open)}>更多筛选{advancedCount ? `（${advancedCount}）` : ''} {more ? '▴' : '▾'}</button>
+      {!isDefaultFilter({ ...value, text }) && (
+        <button
+          className="chip chip-clear"
+          title="恢复默认筛选（筛选条件按项目自动记住）"
+          onClick={() => {
+            setText('');
+            onChange({ ...DEFAULT_FILTER });
+          }}
+        >
+          ✕ 清空筛选
+        </button>
+      )}
+      <span className="grow" />
+      {children}
+      <div className="filter-secondary" id={moreId} hidden={!more}>
       {components.length > 0 && (
         <select
           className="select"
@@ -79,7 +103,6 @@ export function FilterBar({ projectKey, value, onChange, components, versions, s
           ))}
         </select>
       )}
-      {!!versions?.length && <VersionFilter value={value.version} versions={versions} onChange={(version) => onChange({ ...value, version })} />}
       {showTypes &&
         ALL_TYPES.map((t) => (
           <button
@@ -103,10 +126,6 @@ export function FilterBar({ projectKey, value, onChange, components, versions, s
             {s.name}
           </button>
         ))}
-      <PersonFilter projectKey={projectKey} value={value.people} onlyMine={value.onlyMine} onChange={people => onChange({ ...value, people, onlyMine: false })} onMine={() => onChange({ ...value, people: [], onlyMine: true })} />
-      <button className="chip" aria-pressed={value.onlyMine} onClick={() => onChange({ ...value, onlyMine: !value.onlyMine, people: [] })}>
-        只看我的
-      </button>
       <button
         className="chip"
         aria-pressed={value.hideOldClosed}
@@ -115,20 +134,13 @@ export function FilterBar({ projectKey, value, onChange, components, versions, s
       >
         隐藏历史已结束
       </button>
-      {!isDefaultFilter({ ...value, text }) && (
-        <button
-          className="chip chip-clear"
-          title="恢复默认筛选（筛选条件按项目自动记住）"
-          onClick={() => {
-            setText('');
-            onChange({ ...DEFAULT_FILTER });
-          }}
-        >
-          ✕ 清空筛选
-        </button>
-      )}
-      <span className="grow" />
-      {children}
+      </div>
+      {!more && <div className="filter-applied" aria-label="已生效的附加筛选">
+        {value.component && <button className="chip" onClick={() => onChange({ ...value, component: '' })}>模块：{value.component} ×</button>}
+        {showTypes && value.types.map(type => <button key={type} className="chip" onClick={() => onChange({ ...value, types: toggleIn(value.types, type) })}>{type} ×</button>)}
+        {showStages && value.stages.map(stage => <button key={stage} className="chip" onClick={() => onChange({ ...value, stages: toggleIn(value.stages, stage) })}>{STAGES.find(s => s.id === stage)?.name} ×</button>)}
+        <span>{value.hideOldClosed ? '已隐藏 30 天前结束的问题' : '包含历史已结束问题'}</span>
+      </div>}
     </div>
   );
 }

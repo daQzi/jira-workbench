@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardFromLegacy, cardSummary, defaultCards, needsProjectIssues, newCard, selectCardIssues, validCards } from './workCards';
+import { cardFromLegacy, cardPreviewCount, cardSummary, defaultCards, needsProjectIssues, newCard, selectCardIssues, validCards } from './workCards';
 import type { Issue } from './types';
 const hf = { estimate: [], devDone: [], devStart: [] };
 const issue = (key: string, fields: Record<string, unknown> = {}): Issue => ({ id: key, key, fields: {
@@ -8,6 +8,12 @@ const issue = (key: string, fields: Record<string, unknown> = {}): Issue => ({ i
 } });
 const select = (issues: Issue[], patch: Parameters<typeof newCard>[0] = {}) => selectCardIssues(issues, newCard(patch), hf, 'alice', '2026-11-10');
 describe('工作台卡片', () => {
+  it('自动高度遵守预览条数，固定高度也不会超出条数设置', () => {
+    expect(cardPreviewCount(newCard({ limit: 5 }))).toBe(5);
+    expect(cardPreviewCount(newCard({ limit: 3, height: 900 }))).toBe(3);
+    expect(cardPreviewCount(newCard({ limit: 10, height: 200 }))).toBe(1);
+    expect(cardPreviewCount(newCard({ limit: 10, height: 300 }))).toBe(3);
+  });
   it('默认清单覆盖熟悉阶段与临期风险，配置独立并通过校验', () => {
     const cards = defaultCards(); expect(cards.map(c => c.title)).toEqual(['待处理', '开发中', '待测试 / 验收', '临期与逾期']);
     expect(validCards(cards)).toBe(true); expect(new Set(cards.map(c => c.id)).size).toBe(4);

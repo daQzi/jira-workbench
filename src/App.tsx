@@ -1,30 +1,33 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, setUnauthorizedListener, type Me } from './lib/api';
 import { useCachedAsync } from './lib/requestCache';
 import { ThemeToggle } from './components/ThemeToggle';
 import { SessionProvider, useSession } from './lib/session';
-import { CreateDialog, type CreateTarget } from './components/CreateDialog';
+import type { CreateTarget } from './components/CreateDialog';
 import type { Project } from './lib/types';
 import { Login } from './components/Login';
 import { FilterBar, DEFAULT_FILTER, type FilterState } from './components/FilterBar';
-import { IssueDrawer } from './components/IssueDrawer';
 import { ErrorState, Loading } from './components/States';
-import { TreeView } from './views/TreeView';
-import { BoardView } from './views/BoardView';
+import { useWorkbenchMotion } from './features/scene/useWorkbenchMotion';
 import { MyWorkView } from './views/MyWorkView';
 import { sharedView } from './components/SavedViews';
-import { HoursWorkspace } from './views/HoursWorkspace';
-import { VersionView } from './views/VersionView';
-import { NotificationsView } from './views/NotificationsView';
-import { McpView } from './views/McpView';
 import { TypeBadge } from './components/Badges';
 import { loadFilter, saveFilter } from './lib/filterPrefs';
-import { Toolbox } from './features/tools/Toolbox';
-import { useTools } from './features/tools/useTools';
+import { ToolsProvider, useTools } from './features/tools/useTools';
 import { CommandPalette } from './components/CommandPalette';
 import { ProjectSwitcher } from './components/ProjectSwitcher';
 import { isValidVersion } from './lib/versions';
 import { loadLastProject, parseHash, pickProject, PROJECT_PAGES, saveLastProject, toHash, type Page, type Route } from './lib/route';
+
+const TreeView = lazy(() => import('./views/TreeView').then(m => ({ default: m.TreeView })));
+const BoardView = lazy(() => import('./views/BoardView').then(m => ({ default: m.BoardView })));
+const HoursWorkspace = lazy(() => import('./views/HoursWorkspace').then(m => ({ default: m.HoursWorkspace })));
+const VersionView = lazy(() => import('./views/VersionView').then(m => ({ default: m.VersionView })));
+const NotificationsView = lazy(() => import('./views/NotificationsView').then(m => ({ default: m.NotificationsView })));
+const McpView = lazy(() => import('./views/McpView').then(m => ({ default: m.McpView })));
+const IssueDrawer = lazy(() => import('./components/IssueDrawer').then(m => ({ default: m.IssueDrawer })));
+const CreateDialog = lazy(() => import('./components/CreateDialog').then(m => ({ default: m.CreateDialog })));
+const Toolbox = lazy(() => import('./features/tools/Toolbox').then(m => ({ default: m.Toolbox })));
 
 interface BackTarget { hash: string; steps: number }
 interface NavigationHistory { workbench?: BackTarget; cardList?: BackTarget }
@@ -103,12 +106,14 @@ export function App() {
   if (authState === 'out' || !me) return <Login onDone={checkAuth} />;
   return (
     <SessionProvider me={me}>
+      <ToolsProvider key={`${me.jiraBaseUrl}:${me.name}`}>
       <Workspace
         onLogout={async () => {
           await api.logout().catch(() => {});
           setAuthState('out');
         }}
       />
+      </ToolsProvider>
     </SessionProvider>
   );
 }
@@ -124,10 +129,21 @@ const NAV: { label: string; pages: Page[] }[] = [
 
 function Workspace({ onLogout }: { onLogout: () => void }) {
   const { me, bump, canWriteProject } = useSession();
+  useWorkbenchMotion();
   const tools = useTools();
   const [route, go] = useRoute();
   const [creating, setCreating] = useState<CreateTarget | null>(null);
   const [palette, setPalette] = useState(false);
+  const [mobileNav, setMobileNav] = useState(false);
+  const sidebar = useRef<HTMLElement>(null);
+  const mobileToggle = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!mobileNav) return;
+    const outside = (event: PointerEvent) => { if (!sidebar.current?.contains(event.target as Node)) setMobileNav(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setMobileNav(false); mobileToggle.current?.focus(); } };
+    document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, [mobileNav]);
   const projects = useCachedAsync<Project[]>('projects', signal => api.projects(signal), []);
 
   // 地址里没写项目（首次打开、旧地址）：补成上次的项目
@@ -138,6 +154,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
   // 当前项目 = 全局维度；null 是「全部项目」
   const pk = route.project ?? null;
   useEffect(() => saveLastProject(pk), [pk]);
+  useEffect(() => setMobileNav(false), [route.page, pk]);
 
   // ⌘K / Ctrl+K：全局跳转（输入框里也生效，对话框打开时不抢）
   useEffect(() => {
@@ -205,8 +222,8 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
   }
 
   return (
-    <div className="app">
-      <nav className="sidebar" aria-label="导航">
+    <div className={`app${mobileNav ? ' nav-open' : ''}`}>
+      <nav ref={sidebar} className="sidebar" aria-label="导航">
         <div className="brand">
           研发工作台
           <small>
@@ -214,6 +231,8 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           </small>
         </div>
         <ProjectSwitcher projects={projects.data} current={pk} onPick={switchProject} canWrite={canWriteProject} />
+        <button ref={mobileToggle} className="btn mobile-nav-toggle" aria-label={mobileNav ? '收起导航' : '展开导航'} aria-expanded={mobileNav} aria-controls="workspace-navigation" onClick={() => setMobileNav(open => !open)}>{mobileNav ? '收起' : '菜单'} ☰</button>
+        <div id="workspace-navigation" className="sidebar-navigation">
         <button className="side-jump" onClick={() => setPalette(true)} title="快速跳转（⌘K / Ctrl+K）">
           <span>跳转到问题…</span>
           <kbd>{IS_MAC ? '⌘K' : 'Ctrl K'}</kbd>
@@ -230,7 +249,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                     aria-current={route.page === p}
                     disabled={disabled}
                     title={disabled ? '请先选择具体项目' : undefined}
-                    onClick={() => go({ page: p, issue: null, card: null })}
+                    onClick={() => { go({ page: p, issue: null, card: null }); setMobileNav(false); }}
                   >
                     {PAGE_LABEL[p]}
                   </button>
@@ -243,6 +262,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         <div className="side-foot">
           <ThemeToggle /><span>{me.name}</span>
           <button onClick={onLogout}>退出</button>
+        </div>
         </div>
       </nav>
 
@@ -290,6 +310,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         )}
 
         <div className="content" style={projectPage ? undefined : { paddingTop: 16 }}>
+          <Suspense fallback={<Loading rows={6}/>}>
           {route.page === 'mcp' && <McpView />}
           {route.page === 'hours' && <HoursWorkspace key={pk ?? '*'} projectKey={pk} onOpen={openIssue} tab={route.tab === 'review' ? 'review' : 'report'} onTabChange={tab => go({ tab: tab === 'review' ? 'review' : null })} />}
           {route.page === 'versions' && pk && <VersionView key={pk} projectKey={pk} onOpen={openIssue}/>}
@@ -309,9 +330,11 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             />
           )}
           {projectPage && pk && project.data && route.page === 'board' && <BoardView projectKey={pk} filter={filter} onOpen={openIssue} />}
+          </Suspense>
         </div>
       </main>
 
+      <Suspense fallback={<div className="drawer-loading" role="status">正在打开…</div>}>
       {route.issue && (
         <IssueDrawer
           issueKey={route.issue}
@@ -323,6 +346,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           onCreate={setCreating}
         />
       )}
+      </Suspense>
       {palette && (
         <CommandPalette
           projects={projects.data ?? []}
@@ -332,7 +356,8 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           onClose={() => setPalette(false)}
         />
       )}
-      {route.page === 'me' && <Toolbox data={tools.data} save={tools.save}/>}
+      <Suspense fallback={null}>{route.page === 'me' && <Toolbox data={tools.data} save={tools.save}/>}</Suspense>
+      <Suspense fallback={<div className="drawer-loading" role="status">正在打开表单…</div>}>
       {creating && (
         <CreateDialog
           target={creating}
@@ -340,6 +365,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           onCreated={() => bump()}
         />
       )}
+      </Suspense>
     </div>
   );
 }

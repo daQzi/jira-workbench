@@ -4,6 +4,7 @@ import { buildJql, isIssueKey } from '../lib/jql';
 import { loadRecent, type RecentIssue } from '../lib/recent';
 import type { Project } from '../lib/types';
 import { StatusPill, TypeBadge } from './Badges';
+import { useDialogFocus } from '../lib/useDialogFocus';
 
 interface Props {
   projects: Project[];
@@ -30,6 +31,8 @@ export function CommandPalette({ projects, currentProject, onOpenIssue, onOpenPr
   const recent = useMemo<RecentIssue[]>(() => loadRecent(), []);
   const q = text.trim();
   const listRef = useRef<HTMLUListElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(dialogRef, onClose);
 
   useEffect(() => {
     if (!q) {
@@ -38,10 +41,11 @@ export function CommandPalette({ projects, currentProject, onOpenIssue, onOpenPr
       return;
     }
     let alive = true;
+    const ctrl = new AbortController();
     const t = setTimeout(() => {
       setState('loading');
       const jql = isIssueKey(q) ? buildJql({ text: q }, '') : buildJql({ project: currentProject ?? undefined, text: q }, 'updated DESC');
-      api.search(jql, { maxResults: 15, fields: FIELDS }).then(
+      api.search(jql, { maxResults: 15, fields: FIELDS }, ctrl.signal).then(
         (r) => {
           if (!alive) return;
           setFound(r.issues.map((i) => ({ kind: 'issue', key: i.key, summary: i.fields.summary, type: i.fields.issuetype.name, status: i.fields.status.name })));
@@ -52,6 +56,7 @@ export function CommandPalette({ projects, currentProject, onOpenIssue, onOpenPr
     }, 220);
     return () => {
       alive = false;
+      ctrl.abort();
       clearTimeout(t);
     };
   }, [q, currentProject]);
@@ -81,7 +86,7 @@ export function CommandPalette({ projects, currentProject, onOpenIssue, onOpenPr
 
   return (
     <div className="modal-mask palette-mask" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="palette" role="dialog" aria-modal="true" aria-label="快速跳转">
+      <div ref={dialogRef} tabIndex={-1} className="palette" role="dialog" aria-modal="true" aria-label="快速跳转">
         <input
           className="palette-input"
           autoFocus

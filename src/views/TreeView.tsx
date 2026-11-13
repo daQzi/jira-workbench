@@ -36,7 +36,6 @@ interface PageData {
   scope: string;
   total: number;
   issues: Issue[];
-  children: Map<string, Issue>;
 }
 
 export function TreeView({ projectKey, filter, mode, selectedKey, onOpen, onCreate, onFilterChange }: Props) {
@@ -78,13 +77,18 @@ export function TreeView({ projectKey, filter, mode, selectedKey, onOpen, onCrea
   const { data, error, loading, reload } = useAsync<PageData>(
     async (signal) => {
       const r = await api.search(jql, { startAt: page * PAGE_SIZE, maxResults: PAGE_SIZE, fields: LIST_FIELDS }, signal);
-      // 树模式下一次性补齐本页所有子项的完整字段（链接里没有经办人等）
-      const childKeys = mode === 'tree' ? r.issues.flatMap((i) => childLinks(i).map((c) => c.key)) : [];
-      const children = childKeys.length ? await fetchByKeys(childKeys, signal) : new Map();
-      return { total: r.total, issues: r.issues, children, scope:JSON.stringify([jql,page,mode]) };
+      return { total: r.total, issues: r.issues, scope:JSON.stringify([jql,page,mode]) };
     },
     [jql, page, mode, version],
   );
+  const scope = JSON.stringify([jql, page, mode]);
+  const currentData = data?.scope === scope ? data : null;
+  const related = useAsync(async signal => {
+    if (!currentData || mode !== 'tree') return null;
+    const keys = currentData.issues.filter(i => expanded.has(i.key)).flatMap(i => childLinks(i).map(c => c.key));
+    return { source: currentData, children: keys.length ? await fetchByKeys(keys, signal) : new Map<string, Issue>() };
+  }, [currentData, mode, [...expanded].sort().join(',')]);
+  const children = related.data?.source === currentData ? related.data?.children ?? new Map<string, Issue>() : new Map<string, Issue>();
 
   if (error && !data) return <ErrorState error={error} onRetry={reload} />;
   if (!data || data.scope!==JSON.stringify([jql,page,mode])) return error?<ErrorState error={error} onRetry={reload}/>:<Loading />;
@@ -107,8 +111,11 @@ export function TreeView({ projectKey, filter, mode, selectedKey, onOpen, onCrea
   const pages = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
 
   return (
-    <div style={{ opacity: loading ? 0.6 : 1, transition: 'opacity .15s' }}>
+    <div aria-busy={loading}>
       {error && <div className="banner">刷新失败：{error.message}</div>}
+      {loading && <p className="muted" role="status">正在同步最新列表，已有内容可继续查看…</p>}
+      {mode === 'tree' && related.loading && expanded.size > 0 && <p className="muted" role="status">正在补齐展开的子项信息…</p>}
+      {mode === 'tree' && related.error && <div className="banner" role="alert">子项同步失败：{related.error.message}<button className="text-btn" onClick={related.reload}>重试子项</button></div>}
       {writable && mode === 'tree' && page === 0 && (
         <div className="quick-row">
           <QuickAdd
@@ -147,7 +154,7 @@ export function TreeView({ projectKey, filter, mode, selectedKey, onOpen, onCrea
           </thead>
           <tbody>
             {data.issues.map((issue, idx) => {
-              const kids = mode === 'tree' ? resolveChildren(issue, data.children) : [];
+              const kids = mode === 'tree' ? resolveChildren(issue, children) : [];
               const open = expanded.has(issue.key);
               const isStory = issue.fields.issuetype.name === '需求';
               return (

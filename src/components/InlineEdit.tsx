@@ -79,7 +79,8 @@ export function AssigneeCell({ issue, onChanged }: { issue: Issue; onChanged: ()
   const { canWriteIssue, toast } = useSession();
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
-  const close = () => setEditing(false);
+  const saving = useRef(false);
+  const close = () => { if (!saving.current) setEditing(false); };
   const ref = useClickOutside(editing, close);
   const current = (issue.fields.assignee as { name?: string } | null)?.name ?? '';
 
@@ -99,22 +100,26 @@ export function AssigneeCell({ issue, onChanged }: { issue: Issue; onChanged: ()
     );
   }
   const save = async (name: string) => {
+    if (saving.current) return;
     if (!name || name === current) return close();
+    saving.current = true;
     setBusy(true);
     try {
-      await api.editIssue(issue.key, { assignee: { name } });
+      await api.editIssue(issue.key, { assignee: { name } }, { feedback: 'local' });
       toast(`${issue.key} 经办人 → ${name}`);
-      close();
+      setEditing(false);
       onChanged();
     } catch (e) {
       toast(`修改经办人失败：${(e as Error).message}`, 'error');
     } finally {
+      saving.current = false;
       setBusy(false);
     }
   };
   return (
-    <div ref={ref} onClick={(e) => e.stopPropagation()} style={{ minWidth: 160, opacity: busy ? 0.5 : 1 }}>
-      <UserPicker label="经办人" value={current} onChange={() => {}} onPick={save} onCancel={close} issueKey={issue.key} autoFocus />
+    <div ref={ref} aria-busy={busy} onClick={(e) => e.stopPropagation()} style={{ minWidth: 160, opacity: busy ? 0.5 : 1 }}>
+      <fieldset className="inline-edit-controls" disabled={busy}><UserPicker label="经办人" value={current} onChange={() => {}} onPick={save} onCancel={close} issueKey={issue.key} autoFocus /></fieldset>
+      {busy && <span className="muted" role="status">保存中…</span>}
     </div>
   );
 }

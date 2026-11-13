@@ -4,7 +4,7 @@ import type { ToolData } from './model';
 import { Base64Panel, DiffPanel, JsonPanel, NotesPanel, TimestampPanel, TodosPanel } from './ToolPanels';
 import { OrbitScene } from '../scene/OrbitScene';
 import { SceneSettings } from '../scene/SceneSettings';
-import { prefersReducedMotion, readMotion } from '../scene/settings';
+import { useWorkbenchMotion } from '../scene/useWorkbenchMotion';
 
 export const TOOLS = [
   { id: 'notes', name: '便签', desc: '随手记录，颜色与置顶', icon: '▤' },
@@ -21,8 +21,18 @@ export type ToolId = typeof TOOLS[number]['id'];
 export function Toolbox({ data, save }: { data: ToolData; save: Parameters<typeof NotesPanel>[0]['save'] }) {
   const [open, setOpen] = useState(false); const [active, setActive] = useState<ToolId | null>(null);
   const root = useRef<HTMLDivElement>(null);
-  const [paused, setPaused] = useState(false); const [rotation, setRotation] = useState(0); const [reduced, setReduced] = useState(prefersReducedMotion);
-  useEffect(() => { const m = window.matchMedia('(prefers-reduced-motion: reduce)'); const update = () => setReduced(m.matches); m.addEventListener('change', update); return () => m.removeEventListener('change', update); }, []);
+  const [paused, setPaused] = useState(false); const rotation = useRef(0); const reduced = useWorkbenchMotion();
+  const scene = useRef<HTMLDivElement>(null); const dragX = useRef<number | null>(null); const frame = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+  function rotate(delta: number) {
+    rotation.current += delta;
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => {
+      const fallback = scene.current?.querySelector<SVGElement>('.static-orbit');
+      if (fallback) fallback.style.transform = `rotate(${rotation.current * 12}deg)`;
+      window.dispatchEvent(new Event('wb-orbit-rotate'));
+    });
+  }
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => { if (root.current && !root.current.contains(event.target as Node)) { setOpen(false); (root.current.querySelector('.toolbox-fab') as HTMLElement | null)?.focus(); } };
@@ -37,6 +47,6 @@ export function Toolbox({ data, save }: { data: ToolData; save: Parameters<typeo
       {open && <section className="toolbox-menu" role="dialog" aria-label="常用工具箱"><header><div><strong>常用工具</strong><span>本机处理 · 内容不发送到第三方</span></div><button className="btn small ghost" aria-label="收起工具箱" onClick={() => setOpen(false)}>×</button></header><div className="toolbox-grid">{TOOLS.map(t => <button key={t.id} onClick={() => { setActive(t.id); setOpen(false); }}><span className="toolbox-icon" aria-hidden="true">{t.icon}</span><span><strong>{t.name}</strong><small>{t.desc}</small></span></button>)}</div><footer>便签与待办仅保存在当前浏览器 / 本机</footer></section>}
       <button className="toolbox-fab" aria-label="常用工具箱" aria-expanded={open} title="常用工具箱" onClick={() => setOpen(v => !v)}><svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>工具箱</span></button>
     </div>
-    {tool && <Modal title={tool.name} width={tool.id === 'notes' ? 780 : tool.id === 'diff' || tool.id === 'scene' ? 880 : 620} onClose={() => setActive(null)}><div className="tool-panel">{tool.id === 'scene' ? <><div className="tool-scene-controls"><button className="btn small" onClick={() => setPaused(p => !p)}>{paused || reduced || readMotion() === 'reduced' ? '继续旋转' : '暂停旋转'}</button><button className="btn small" onClick={() => setRotation(r => r + 1)}>旋转视角</button><span>拖动场景也可旋转 · {data.notes.length} 条便签 · {data.todos.filter(t => !t.done).length} 项待办</span></div><div className="tool-orbit" onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); setRotation(r => r + e.movementX / 100); }} onPointerMove={e => { if (e.buttons === 1) setRotation(r => r + e.movementX / 100); }}><OrbitScene key={rotation} compact paused={paused}><span className="tool-scene-caption">本地工作星图 · 仅作视觉装饰</span></OrbitScene></div></> : tool.id === 'settings' ? <SceneSettings/> : tool.id === 'notes' ? <NotesPanel data={data} save={save}/> : tool.id === 'todos' ? <TodosPanel data={data} save={save}/> : tool.id === 'timestamp' ? <TimestampPanel/> : tool.id === 'base64' ? <Base64Panel/> : tool.id === 'json' ? <JsonPanel/> : <DiffPanel/>}</div></Modal>}
+    {tool && <Modal title={tool.name} width={tool.id === 'notes' ? 780 : tool.id === 'diff' || tool.id === 'scene' ? 880 : 620} onClose={() => setActive(null)}><div className="tool-panel">{tool.id === 'scene' ? <><div className="tool-scene-controls"><button className="btn small" disabled={reduced} onClick={() => setPaused(p => !p)}>{reduced ? '已减少动画' : paused ? '继续旋转' : '暂停旋转'}</button><button className="btn small" onClick={() => rotate(.6)}>旋转视角</button><span>拖动场景也可旋转 · {data.notes.length} 条便签 · {data.todos.filter(t => !t.done).length} 项待办</span></div><div ref={scene} className="tool-orbit" onPointerDown={e => { dragX.current = e.clientX; e.currentTarget.setPointerCapture(e.pointerId); }} onPointerMove={e => { if (dragX.current === null) return; rotate((e.clientX - dragX.current) / 100); dragX.current = e.clientX; }} onPointerUp={() => { dragX.current = null; }} onPointerCancel={() => { dragX.current = null; }}><OrbitScene compact paused={paused} rotation={rotation}><span className="tool-scene-caption">本地工作星图 · 仅作视觉装饰</span></OrbitScene></div></> : tool.id === 'settings' ? <SceneSettings/> : tool.id === 'notes' ? <NotesPanel data={data} save={save}/> : tool.id === 'todos' ? <TodosPanel data={data} save={save}/> : tool.id === 'timestamp' ? <TimestampPanel/> : tool.id === 'base64' ? <Base64Panel/> : tool.id === 'json' ? <JsonPanel/> : <DiffPanel/>}</div></Modal>}
   </>;
 }

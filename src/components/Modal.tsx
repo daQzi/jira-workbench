@@ -1,4 +1,6 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { useDialogFocus } from '../lib/useDialogFocus';
 
 interface Props {
   title: ReactNode;
@@ -13,14 +15,9 @@ interface Props {
 /** 通用对话框：Esc 关闭、打开时聚焦第一个输入控件 */
 export function Modal({ title, onClose, children, footer, width = 640, busy = false }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const prev = document.activeElement as HTMLElement | null;
-    const el = ref.current?.querySelector<HTMLElement>('input:not(.sr-only),select,textarea,button.btn');
-    el?.focus();
-    return () => prev?.focus?.();
-  }, []);
   const close = () => { if (!busy) onClose(); };
-  return (
+  useDialogFocus(ref, close);
+  return createPortal(
     <div
       className="modal-mask"
       onMouseDown={(e) => e.target === e.currentTarget && close()}
@@ -31,7 +28,7 @@ export function Modal({ title, onClose, children, footer, width = 640, busy = fa
         }
       }}
     >
-      <div className="modal" role="dialog" aria-modal="true" aria-busy={busy} aria-label={typeof title === 'string' ? title : undefined} ref={ref} style={{ width: `min(${width}px, 94vw)` }}>
+      <div className="modal" role="dialog" aria-modal="true" aria-busy={busy} aria-label={typeof title === 'string' ? title : undefined} tabIndex={-1} ref={ref} style={{ width: `min(${width}px, 94vw)` }}>
         <header className="modal-head">
           <h3>{title}</h3>
           <button className="btn ghost" disabled={busy} onClick={close} aria-label="关闭">
@@ -41,6 +38,6 @@ export function Modal({ title, onClose, children, footer, width = 640, busy = fa
         <div className="modal-body">{children}</div>
         {footer && <footer className="modal-foot">{footer}</footer>}
       </div>
-    </div>
+    </div>, document.body
   );
 }

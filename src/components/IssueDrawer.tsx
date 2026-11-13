@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDialogFocus } from '../lib/useDialogFocus';
 import { api, fetchByKeys, fileUrl, type Transition } from '../lib/api';
 import { useSession } from '../lib/session';
 import { useTransition } from '../lib/useTransition';
@@ -44,32 +45,23 @@ const SIDE_FIELDS = new Set([
   'workratio', 'customfield_11100', 'customfield_11101', 'customfield_11201',
 ]);
 
-interface Loaded {
-  issue: IssueDetail;
-  children: Issue[];
-}
-
 export function IssueDrawer({ issueKey, jiraBaseUrl, currentProject = null, onSwitchProject, onOpen, onClose, onCreate }: Props) {
   const { version } = useSession();
   const [tab, setTab] = useState<'comments' | 'history'>('comments');
-  const { data, error, reload } = useAsync<Loaded>(
-    async (signal) => {
-      const issue = await api.issue(issueKey, signal);
-      const keys = childLinks(issue).map((c) => c.key);
-      const full = keys.length ? await fetchByKeys(keys, signal) : new Map();
-      return { issue, children: resolveChildren(issue, full) };
-    },
+  const { data, error, loading, reload } = useAsync<IssueDetail>(
+    signal => api.issue(issueKey, signal),
     [issueKey, version],
   );
 
-  useEffect(() => {
-    // 对话框打开时 Esc 交给对话框处理
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !document.querySelector('.modal-mask, .lightbox') && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const issue = data?.issue.key === issueKey ? data.issue : null;
+  const drawerRef = useRef<HTMLElement>(null);
+  useDialogFocus(drawerRef, () => { if (!document.querySelector('.modal-mask, .lightbox')) onClose(); });
+  const issue = data?.key === issueKey ? data : null;
+  const related = useAsync(async signal => {
+    if (!issue) return null;
+    const keys = childLinks(issue).map(c => c.key);
+    return { issue, full: keys.length ? await fetchByKeys(keys, signal) : new Map<string, Issue>() };
+  }, [issue]);
+  const children = issue ? resolveChildren(issue, related.data?.issue === issue ? related.data.full : new Map()) : [];
 
   // 记入「最近查看」，供 ⌘K 面板使用
   useEffect(() => {
@@ -81,15 +73,22 @@ export function IssueDrawer({ issueKey, jiraBaseUrl, currentProject = null, onSw
   return (
     <>
       <div className="drawer-mask" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-modal="true" aria-label={`问题 ${issueKey}`}>
+      <aside ref={drawerRef} tabIndex={-1} className="drawer" role="dialog" aria-modal="true" aria-label={`问题 ${issueKey}`}>
         {!issue ? (
           <div style={{ padding: 20 }}>
             {error ? <ErrorState error={error} onRetry={reload} /> : <Loading rows={10} />}
           </div>
         ) : (
+          <>
+          {error && <div className="banner" role="alert">刷新失败：{error.message}<button className="text-btn" onClick={reload}>重试</button></div>}
+          {loading && <div className="drawer-sync" role="status">正在同步最新详情…</div>}
           <DrawerContent
+            key={issueKey}
             issue={issue}
-            children={data!.children}
+            children={children}
+            childrenLoading={related.loading || related.data?.issue !== issue}
+            childrenError={related.error}
+            onRetryChildren={related.reload}
             jiraBaseUrl={jiraBaseUrl}
             currentProject={currentProject}
             onSwitchProject={onSwitchProject}
@@ -99,6 +98,7 @@ export function IssueDrawer({ issueKey, jiraBaseUrl, currentProject = null, onSw
             tab={tab}
             setTab={setTab}
           />
+          </>
         )}
       </aside>
     </>
@@ -108,6 +108,9 @@ export function IssueDrawer({ issueKey, jiraBaseUrl, currentProject = null, onSw
 interface ContentProps {
   issue: IssueDetail;
   children: Issue[];
+  childrenLoading: boolean;
+  childrenError: Error | null;
+  onRetryChildren: () => void;
   jiraBaseUrl: string;
   currentProject: string | null;
   onSwitchProject?: (key: string) => void;
@@ -118,7 +121,7 @@ interface ContentProps {
   setTab: (t: 'comments' | 'history') => void;
 }
 
-function DrawerContent({ issue, children, jiraBaseUrl, currentProject, onSwitchProject, onOpen, onClose, onCreate, tab, setTab }: ContentProps) {
+function DrawerContent({ issue, children, childrenLoading, childrenError, onRetryChildren, jiraBaseUrl, currentProject, onSwitchProject, onOpen, onClose, onCreate, tab, setTab }: ContentProps) {
   const { bump, canWriteIssue } = useSession();
   const writable = canWriteIssue(issue.key);
   const copy = useCopyIssue();
@@ -260,6 +263,7 @@ function DrawerContent({ issue, children, jiraBaseUrl, currentProject, onSwitchP
                   </button>
                 )}
               </h4>
+              {childrenError ? <div className="banner" role="alert">子项同步失败：{childrenError.message}<button className="text-btn" onClick={onRetryChildren}>重试子项</button></div> : childrenLoading && <p className="muted" role="status">正在补齐子项信息…</p>}
               {children.length === 0 ? (
                 <p className="muted">暂无子项</p>
               ) : (
@@ -618,12 +622,6 @@ function Attachments({ issue, writable, perms, onChanged }: { issue: IssueDetail
   const list = ((issue.fields.attachment as Attachment[] | undefined) ?? []).slice().sort((a, b) => b.created.localeCompare(a.created));
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<Attachment | null>(null);
-  useEffect(() => {
-    if (!preview) return;
-    const on = (e: KeyboardEvent) => e.key === 'Escape' && setPreview(null);
-    window.addEventListener('keydown', on);
-    return () => window.removeEventListener('keydown', on);
-  }, [preview]);
 
   const upload = async (files: File[]) => {
     if (!files.length || busy) return;
@@ -703,14 +701,19 @@ function Attachments({ issue, writable, perms, onChanged }: { issue: IssueDetail
       ) : (
         list.length === 0 && <p className="muted">暂无附件</p>
       )}
-      {preview && (
-        <div className="lightbox" role="dialog" aria-label={preview.filename} onClick={() => setPreview(null)}>
-          <img src={fileUrl(preview.content)} alt={preview.filename} />
-          <span>{preview.filename}（点击或 Esc 关闭）</span>
-        </div>
-      )}
+      {preview && <AttachmentPreview attachment={preview} onClose={() => setPreview(null)}/>}
     </section>
   );
+}
+
+function AttachmentPreview({ attachment, onClose }: { attachment: Attachment; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useDialogFocus(ref, onClose);
+  return <div ref={ref} tabIndex={-1} className="lightbox" role="dialog" aria-modal="true" aria-label={attachment.filename} onClick={onClose}>
+    <button className="btn" aria-label="关闭图片预览" onClick={onClose}>关闭 ✕</button>
+    <img src={fileUrl(attachment.content)} alt={attachment.filename}/>
+    <span>{attachment.filename}（点击或 Esc 关闭）</span>
+  </div>;
 }
 
 /** 删除按钮：点 ✕ 后原地二次确认（4 秒内不确认自动取消），失败时 toast 提示 */

@@ -15,6 +15,7 @@ export function FullTextTooltip() {
   const leave = () => { cancel(); timer.current = setTimeout(() => setHint(null), 180); };
   useEffect(() => {
     function find(target: EventTarget | null, focus: boolean) {
+      if (document.body.matches('.is-card-dragging,.is-card-resizing')) return null;
       if (!(target instanceof Element) || target.closest('.full-text-tooltip')) return null;
       const element = (focus ? target.querySelector(SELECTOR) : null) || target.closest(SELECTOR);
       if (!element) return null;
@@ -45,12 +46,14 @@ export function FullTextTooltip() {
     document.addEventListener('keydown', escape, true);
     document.addEventListener('scroll', scroll, true);
     document.addEventListener('click', click);
+    document.addEventListener('pointerdown', click);
     window.addEventListener('resize', close);
     return () => {
       cancel(); document.removeEventListener('mouseover', show); document.removeEventListener('focusin', show);
       document.removeEventListener('mouseout', out); document.removeEventListener('focusout', out);
       document.removeEventListener('keydown', escape, true); document.removeEventListener('scroll', scroll, true); window.removeEventListener('resize', close);
       document.removeEventListener('click', click);
+      document.removeEventListener('pointerdown', click);
     };
   }, []);
   useLayoutEffect(() => {

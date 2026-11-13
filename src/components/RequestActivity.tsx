@@ -4,18 +4,8 @@ import { requestActivity, subscribeRequestActivity } from '../lib/requestActivit
 /** 短请求不闪屏；写入由接口边界统一去重，界面上再阻止其他点击和键盘操作。 */
 export function RequestActivity() {
   const pending = useSyncExternalStore(subscribeRequestActivity, requestActivity);
-  const [, setNow] = useState(() => Date.now());
   const [shownAt, setShownAt] = useState<number | null>(null);
   const active = pending.reads + pending.writes > 0;
-  useEffect(() => {
-    if (!active) {
-      setShownAt(null);
-      return;
-    }
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 100);
-    return () => clearInterval(timer);
-  }, [active]);
   useEffect(() => {
     if (!pending.writes) return;
     const lock = (event: KeyboardEvent) => {
@@ -26,7 +16,7 @@ export function RequestActivity() {
     return () => document.removeEventListener('keydown', lock, true);
   }, [pending.writes]);
   useEffect(() => {
-    if (!active) return;
+    if (!active) { setShownAt(null); return; }
     const timer = setTimeout(() => setShownAt(Date.now()), pending.writes ? 150 : 350);
     return () => clearTimeout(timer);
   }, [active, pending.writes > 0]);

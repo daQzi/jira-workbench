@@ -11,6 +11,7 @@ interface Snapshot { key: string; project: string; namespace: string; revision: 
 const memory = new Map<string, Snapshot>();
 const STORE = 'wb.board.snapshots.v1';
 let cacheGeneration = 0;
+let persistTimer: ReturnType<typeof setTimeout> | undefined;
 function pause(ms: number, signal: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     signal.throwIfAborted();
@@ -28,14 +29,19 @@ function validSnapshot(value: Snapshot) {
 function remember(value: Snapshot) {
   memory.delete(value.key); memory.set(value.key, value);
   while (memory.size > 8) memory.delete(memory.keys().next().value!);
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(persistSnapshots, 250);
+}
+function persistSnapshots() {
+  clearTimeout(persistTimer); persistTimer = undefined;
   try {
     const saved = [...memory.values()].map(v => ({ ...v, checking: false, columns: Object.fromEntries(Object.entries(v.columns).map(([id, c]) => [id, { result: c?.result }])), stats: !v.statsRefresh && v.stats && !v.stats.loading && !v.stats.error ? v.stats : undefined }));
     while (JSON.stringify(saved).length > 1_000_000) saved.shift();
     sessionStorage.setItem(STORE, JSON.stringify(saved));
   } catch { /* 只影响下次恢复，当前内存缓存仍然有效 */ }
 }
-export function clearBoardCaches() { cacheGeneration++; memory.clear(); try { sessionStorage.removeItem(STORE); } catch { /* 存储不可用 */ } }
-if (typeof window !== 'undefined') window.addEventListener('wb-session-ended', clearBoardCaches);
+export function clearBoardCaches() { cacheGeneration++; clearTimeout(persistTimer); memory.clear(); try { sessionStorage.removeItem(STORE); } catch { /* 存储不可用 */ } }
+if (typeof window !== 'undefined') { window.addEventListener('wb-session-ended', clearBoardCaches); window.addEventListener('pagehide', persistSnapshots); }
 function read(key: string, project: string, namespace: string): Snapshot {
   if (!memory.size) {
     try { const saved: unknown = JSON.parse(sessionStorage.getItem(STORE) || '[]'); if (Array.isArray(saved)) for (const value of saved) if (validSnapshot(value)) memory.set(value.key, value); } catch { /* 无可用快照 */ }
@@ -59,6 +65,8 @@ export function useBoardData(project: string, filter: FilterState, namespace: st
   const stageKey = (filter.stages.length ? filter.stages : STAGES.map(s => s.id)).slice().sort().join(',');
   const [snapshot, setSnapshot] = useState(() => read(key, project, namespace));
   if (snapshot.key !== key) setSnapshot(read(key, project, namespace));
+  // React updater 保持纯函数；序列化合并到交互之后，避免逐列/逐页阻塞渲染。
+  useEffect(() => { remember(snapshot); }, [snapshot]);
   const current = useRef(snapshot); current.current = snapshot;
   const [nonce, setNonce] = useState(0);
   const forceNext = useRef(false);
@@ -73,7 +81,7 @@ export function useBoardData(project: string, filter: FilterState, namespace: st
     const ids = stageKey.split(',') as StageId[];
     const update = (fn: (s: Snapshot) => Snapshot) => {
       if (ctrl.signal.aborted || generation !== cacheGeneration) return;
-      setSnapshot(s => { if (ctrl.signal.aborted || generation !== cacheGeneration || s.key !== key) return s; const next = fn(s); remember(next); return next; });
+      setSnapshot(s => { if (ctrl.signal.aborted || generation !== cacheGeneration || s.key !== key) return s; return fn(s); });
     };
     update(s => ({ ...s, checking: true, error: undefined, statsRefresh: s.statsRefresh || force }));
     (async () => {
@@ -114,7 +122,7 @@ export function useBoardData(project: string, filter: FilterState, namespace: st
     const ctrl = new AbortController();
     const generation = cacheGeneration;
     const update = (fn: (s: Snapshot) => Snapshot) => {
-      if (!ctrl.signal.aborted && generation === cacheGeneration) setSnapshot(s => { if (ctrl.signal.aborted || generation !== cacheGeneration || s.key !== key) return s; const next = fn(s); remember(next); return next; });
+      if (!ctrl.signal.aborted && generation === cacheGeneration) setSnapshot(s => { if (ctrl.signal.aborted || generation !== cacheGeneration || s.key !== key) return s; return fn(s); });
     };
     const revision = current.current.revision;
     const refreshStats = !!current.current.statsRefresh;

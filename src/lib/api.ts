@@ -26,15 +26,16 @@ function messageOf(body: unknown, status: number): string {
   return msgs.length ? msgs.join('；') : `请求失败（HTTP ${status}）`;
 }
 
-export interface ReadOptions { refresh?: boolean; background?: boolean }
+export interface ReadOptions { refresh?: boolean; background?: boolean; feedback?: 'local' | 'global' }
 async function request<T>(method: string, url: string, body?: unknown, signal?: AbortSignal, options: ReadOptions = {}): Promise<T> {
-  const res = await trackRequest(() => fetch(url, {
+  const run = () => fetch(url, {
     method,
     credentials: 'same-origin',
     headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(options.refresh ? { 'X-WB-Refresh': '1' } : {}), ...(options.background ? { 'X-WB-Priority': 'background' } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
-  }), method !== 'GET');
+  });
+  const res = options.feedback === 'local' ? await run() : await trackRequest(run, method !== 'GET');
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   // 同一 URL 已被其他组件发起或替换时，本地代理用 202 表示请求仍在共享队列里。
   if (res.status === 202 && (data as { pending?: boolean } | null)?.pending === true) {
@@ -63,8 +64,8 @@ function writeOnce<T>(key: string, run: () => Promise<T>): Promise<T> {
   return promise;
 }
 
-const jiraWrite = <T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown) =>
-  writeOnce(`${method}:${path}:${JSON.stringify(body)}`, () => request<T>(method, `/api/jira/${path}`, body));
+const jiraWrite = <T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, options?: ReadOptions) =>
+  writeOnce(`${method}:${path}:${JSON.stringify(body)}`, () => request<T>(method, `/api/jira/${path}`, body, undefined, options));
 
 export interface FilterUserResult {
   users: JiraUser[];
@@ -199,7 +200,7 @@ export const api = {
 
   createIssue: (body: { fields: Record<string, unknown>; update?: Record<string, unknown> }) =>
     jiraWrite<{ id: string; key: string }>('POST', 'issue', body),
-  editIssue: (key: string, fields: Record<string, unknown>) => jiraWrite<null>('PUT', `issue/${enc(key)}`, { fields }),
+  editIssue: (key: string, fields: Record<string, unknown>, options?: ReadOptions) => jiraWrite<null>('PUT', `issue/${enc(key)}`, { fields }, options),
   doTransition: (key: string, transitionId: string, fields?: Record<string, unknown>) =>
     jiraWrite<null>('POST', `issue/${enc(key)}/transitions`, {
       transition: { id: transitionId },

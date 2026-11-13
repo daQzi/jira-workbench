@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from '../lib/session';
 import type { Issue } from '../lib/types';
 import { NO_VERSION, versionNames } from '../lib/versions';
@@ -11,11 +11,12 @@ import { Modal } from '../components/Modal';
 import { loadLocal, saveLocal, scopeKey, overdue, dueDate, finished } from '../lib/management';
 import { useManagementData } from '../lib/useManagementData';
 import { relativeTime } from '../lib/format';
-import { CARD_LIMIT, CARD_TEMPLATES, cardFromLegacy, cardSummary, defaultCards, isWidget, needsProjectIssues, newCard, newWidget, selectCardIssues, validCards, validLegacyViews, type WorkCard, type WorkbenchCard } from '../lib/workCards';
+import { CARD_LIMIT, CARD_TEMPLATES, cardFromLegacy, cardSummary, defaultCards, isWidget, needsProjectIssues, newCard, newWidget, cardPreviewCount, selectCardIssues, validCards, validLegacyViews, type WorkCard, type WorkbenchCard } from '../lib/workCards';
 import { loadWorkbench, saveWorkbench, downloadBackup, readBackup } from '../lib/workbenchBackup';
 import { useTools } from '../features/tools/useTools';
 import { WidgetCard } from '../features/tools/WidgetCard';
-import { resizeCard, resizeColumn } from '../features/workbench/resize';
+import { CardResizeHandle } from '../features/workbench/CardResizeHandle';
+import { mergeVisibleOrder } from '../features/workbench/reorder';
 import { useWorkbenchMotion } from '../features/scene/useWorkbenchMotion';
 import { CardGrid } from '../features/workbench/CardGrid';
 
@@ -58,14 +59,13 @@ function CardWorkbench({ projectKey, onOpen, cardId: allId, onCardChange }: Work
   const gridScroll = useRef(initialScroll);
   const previousCard = useRef(allId);
   const currentCard = useRef(allId); currentCard.current = allId;
-  const resizeRef = useRef<{ id: string; x: number; y: number; width: number; height: number; colWidth: number; widthSpan: WorkCard['width']; element: HTMLElement } | null>(null);
   const everyone = needsProjectIssues(cards);
   const data = useManagementData(projectKey, everyone);
   const issues = data.data?.issues ?? [];
   const savedViews = loadLocal(`wb.workViews.v1:${scopeKey(me.jiraBaseUrl, me.name, projectKey)}:saved`, [], validLegacyViews);
   const atLimit = cards.length >= CARD_LIMIT;
 
-  const visibleCards = cards.filter(c => !('hidden' in c && c.hidden));
+  const visibleCards = useMemo(() => cards.filter(c => !c.hidden), [cards]);
   const hiddenCards = cards.filter(c => 'hidden' in c && c.hidden);
   const all = cards.find(c => c.id === allId);
   function persist(next: WorkbenchCard[], message?: string) {
@@ -133,7 +133,8 @@ function CardWorkbench({ projectKey, onOpen, cardId: allId, onCardChange }: Work
     onCardChange(id);
   }
   const hf = data.data?.hourFields;
-  const listFor = (c: WorkCard) => hf ? selectCardIssues(issues, c, hf, me.name) : [];
+  const lists = useMemo(() => new Map(cards.filter(c => !isWidget(c)).map(c => [c.id, hf ? selectCardIssues(issues, c as WorkCard, hf, me.name) : []])), [cards, data.data?.issues, hf, me.name]);
+  const listFor = (c: WorkCard) => lists.get(c.id) ?? [];
   return <div className="card-workbench" ref={rootRef}><p id="workbench-drag-help" className="sr-only">按住标题拖动排序，松手保存；按空格或回车抓取卡片，方向键选择位置，再按空格或回车放下；Esc 取消。</p><span className="sr-only" role="status" aria-live="polite"></span>
     {all && <nav className="workbench-list-nav" aria-label="卡片列表导航"><button className="workbench-back" onClick={() => onCardChange(null)}>←<span>返回工作台</span></button></nav>}
     <div className="workspace-intro"><div><h2>{all && !isWidget(all) ? all.title : '把常看的任务清单，贴在这里。'}</h2><p>{all && !isWidget(all) ? cardSummary(all) : '按住标题拖动排序，其他卡片自动让位；拖右下角调整大小，松手自动保存。'}</p></div><div className="workbench-actions">
@@ -146,65 +147,33 @@ function CardWorkbench({ projectKey, onOpen, cardId: allId, onCardChange }: Work
     {data.data?.provisional && data.data.issues.length > 0 && !data.data.backgroundLoading && <div className="management-notice">当前卡片基于首批或临时数据，最终统计仍在补全，请稍后刷新核对。</div>}
     {data.data?.error && <div className="management-notice" role="alert">{data.data.error.message} 当前结果可能不完整或不是最新，统计与导出以页面显示范围为准。<button className="btn small" onClick={data.reload}>重试同步</button></div>}
     {data.data && !data.data.backgroundLoading && data.data.total > issues.length && <div className="management-notice" role="status">共 {data.data.total} 项，当前仅加载前 {issues.length} 项；卡片数量、筛选与导出基于已加载结果。请在左上角选择具体项目缩小范围。</div>}
-    {!data.data ? !data.error && <Loading rows={6}/> : <>
-    {all && !isWidget(all) && <>
+    {all && !data.data && !data.error && <Loading rows={6}/>}
+    {all && !isWidget(all) && data.data && <>
       {all.view === 'blocked' && <div className="management-notice">仅显示未完成的入向 Blocks 依赖；需求下子项的父子链接不视为阻塞。</div>}
       {all.view === 'missing' && <div className="management-notice">检查开发人员、开发预估时间、开发完成/解决日期；未结束任务也可能缺完成日期。</div>}
       <ManagementTable key={all.id} issues={data.data?.error ? [] : listFor(all)} onOpen={onOpen} scope={`work-card:${projectKey ?? '*'}:${all.id}`} onChanged={data.reload}/>
     </>}
-    <div hidden={!!all}><div className="workbench-grid-wrap"><CardGrid cards={visibleCards} persist={persist} reduced={reducedMotion}>{(c, index, _active, handle, overlay) => {
+    <div hidden={!!all}><div className="workbench-grid-wrap"><CardGrid cards={visibleCards} onReorder={ids => persist(mergeVisibleOrder(cards, ids), '卡片位置已保存')} reduced={reducedMotion}>{(c, index, _active, handle, overlay) => {
         const widget = isWidget(c);
         const list = widget ? [] : listFor(c);
-        const shown = widget ? 0 : !c.height ? list.length : Math.max(1, Math.min(c.limit, Math.floor((c.height - 96) / 64)));
+        const shown = widget ? 0 : cardPreviewCount(c);
         const visible = widget ? [] : list.slice(0, shown);
         return <><section className={`workbench-card-inner${widget ? ' widget-card' : ''}${c.width === 4 ? ' wide' : ''}${c.height ? ' fixed-height' : ''}`} key={c.id} aria-label={c.title} style={{ height: c.height }}>
           <header {...handle.attributes} {...handle.listeners} ref={handle.ref} className={`workbench-card-head accent-${index % 4}`} tabIndex={0}>
             <div><h3>{c.title}{!widget && <span className="workbench-count">{list.length}</span>}{!widget && c.custom && <span className="workbench-custom">自定义</span>}{widget && <span className="workbench-custom">本机组件</span>}</h3><p>{widget ? (c.widget === 'notes' ? '临时想法与提醒，仅保存在本机' : '个人清单，不创建 Jira 任务') : cardSummary(c)}</p></div>
-            <div className="workbench-menu" data-no-drag hidden={overlay}><button className="btn small ghost workbench-more" aria-label={`更多操作：${c.title}`} aria-expanded={menu === c.id} aria-haspopup="menu" onClick={() => setMenu(menu === c.id ? null : c.id)}>•••</button>{menu === c.id && <div className="workbench-menu-list" role="menu">
+            <div className="workbench-menu" data-no-drag hidden={overlay} onPointerDown={event => event.stopPropagation()}><button className="btn small ghost workbench-more" aria-label={`更多操作：${c.title}`} aria-expanded={menu === c.id} aria-haspopup="menu" onClick={() => setMenu(menu === c.id ? null : c.id)}>•••</button>{menu === c.id && <div className="workbench-menu-list" role="menu">
               {!widget && <button role="menuitem" onClick={() => { setEditor(c); setMenu(null); }}>编辑条件</button>}
               {c.height && <button role="menuitem" onClick={() => { persist(cards.map(x => x.id === c.id ? { ...x, height: undefined } : x)); setMenu(null); }}>恢复自动高度</button>}
               <button role="menuitem" onClick={() => changeHidden(c.id, true)}>隐藏卡片</button>
               <button role="menuitem" className="danger" onClick={() => { setRemoving(c); setMenu(null); }}>删除卡片</button>
             </div>}</div>
           </header>
-          {widget ? <WidgetCard kind={c.widget} data={tools.data} save={tools.save}/> : <>
+          {widget ? <WidgetCard kind={c.widget} data={tools.data} save={tools.save}/> : !data.data ? <div className="workbench-card-items">{data.error ? <p className="muted">数据读取失败，请重试同步</p> : <Loading rows={3}/>}</div> : <>
           <div className="workbench-card-items">{visible.map(i => <div className="workbench-task" key={i.key}><button className="workbench-task-open" onClick={() => onOpen(i.key)}><span className="workbench-task-title"><TypeBadge type={i.fields.issuetype.name}/><span>{i.fields.summary}</span></span><span className="workbench-task-meta"><span className="mono">{i.key}</span><StatusPill status={i.fields.status.name}/>{dueDate(i) && !finished(i) ? <span className={overdue(i) ? 'err' : ''}>{overdue(i) ? '已逾期 · ' : '到期 '}{dueDate(i)}</span> : <span>{relativeTime(i.fields.updated)}</span>}</span></button><CopyIssueButton issueKey={i.key} summary={i.fields.summary} className="workbench-copy"/></div>)}{!list.length && <div className="workbench-empty"><span aria-hidden="true">✓</span> 当前清单已清空</div>}</div>
           <footer className="workbench-card-foot"><span>显示 {visible.length} / {list.length} 条</span><div><button className="btn small ghost" data-card-open={c.id} onClick={() => openCard(c.id)}>查看全部 →</button></div></footer></>}
-          <button className="workbench-resize-handle" aria-label={`拖拽调整${c.title}大小，方向键也可调整`} onPointerDown={event => {
-            if (event.button !== 0 || window.innerWidth < 1100 || resizeRef.current) return;
-            event.preventDefault(); event.stopPropagation();
-            const cardElement = event.currentTarget.closest<HTMLElement>('.workbench-card')!, rect = cardElement.getBoundingClientRect();
-            const gridElement = event.currentTarget.closest('.workbench-grid')!, grid = gridElement.getBoundingClientRect();
-            const gap = parseFloat(getComputedStyle(gridElement).columnGap) || 16;
-            const start = { id: c.id, x: event.clientX, y: event.clientY, width: rect.width, height: rect.height, colWidth: (grid.width + gap) / 4, widthSpan: c.width, element: cardElement };
-            resizeRef.current = start; cardElement.classList.add('resizing'); document.body.classList.add('is-card-resizing'); event.currentTarget.setPointerCapture(event.pointerId);
-            let frame = 0, next = { width: c.width, height: Math.max(200, rect.height) }, lastHeight = next.height;
-            const move = (moveEvent: PointerEvent) => {
-              if (moveEvent.pointerId !== event.pointerId) return;
-              const result = resizeCard(start, { x: moveEvent.clientX, y: moveEvent.clientY }), width = result.width, height = result.height;
-              if (width === next.width && height === next.height) return;
-              next = { width, height };
-              if (height !== lastHeight) { lastHeight = height; cancelAnimationFrame(frame); frame = requestAnimationFrame(() => { cardElement.style.height = `${height}px`; cardElement.style.gridColumn = resizeColumn(width); }); }
-              else { cardElement.style.gridColumn = resizeColumn(width); }
-            };
-            const restore = () => { cardElement.style.height = c.height ? `${c.height}px` : ''; cardElement.style.gridColumn = resizeColumn(c.width); };
-            const finish = (commit: boolean) => {
-              cancelAnimationFrame(frame); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', cancel); window.removeEventListener('keydown', escape, true);
-              cardElement.classList.remove('resizing'); document.body.classList.remove('is-card-resizing'); resizeRef.current = null; restore();
-              if (commit && (next.width !== c.width || next.height !== c.height)) persist(cards.map(x => x.id === c.id ? { ...x, width: next.width, height: next.height } : x));
-            };
-            const up = () => finish(true); const cancel = () => finish(false);
-            const escape = (escapeEvent: KeyboardEvent) => { if (escapeEvent.key === 'Escape') { escapeEvent.preventDefault(); escapeEvent.stopPropagation(); finish(false); } };
-            window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', cancel); window.addEventListener('keydown', escape, true);
-          }} onKeyDown={event => {
-            if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
-            event.preventDefault();
-            const width = Math.max(1, Math.min(4, c.width + (event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0))) as WorkCard['width'];
-            const height = Math.max(200, Math.min(900, (c.height ?? 400) + (event.key === 'ArrowUp' ? -20 : event.key === 'ArrowDown' ? 20 : 0)));
-            persist(cards.map(x => x.id === c.id ? { ...x, width, height } : x));
-          }}><span aria-hidden="true" /></button>
+          <CardResizeHandle card={c} onResize={(width, height) => persist(cards.map(x => x.id === c.id ? { ...x, width, height } : x))}/>
         </section></>;
-    }}</CardGrid><button className="workbench-add" disabled={atLimit} onClick={() => setLibrary(true)}><strong>＋ 再贴一张卡片</strong><span>{atLimit ? `已达 ${CARD_LIMIT} 张上限` : 'Jira 清单 / 本机便签 / 个人待办'}</span></button></div></div></>}
+    }}</CardGrid><button className="workbench-add" disabled={atLimit} onClick={() => setLibrary(true)}><strong>＋ 再贴一张卡片</strong><span>{atLimit ? `已达 ${CARD_LIMIT} 张上限` : 'Jira 清单 / 本机便签 / 个人待办'}</span></button></div></div>
     {library && <Modal title="添加到工作台" onClose={() => setLibrary(false)} width={740}>
       <h4 className="workbench-library-heading">Jira 任务清单</h4>
       <div className="workbench-library">{CARD_TEMPLATES.map(t => <button key={t.name} className="workbench-template" onClick={() => { if (persist([...cards, newCard({ ...t.patch, title: t.name, custom: false })])) setLibrary(false); }}><strong>{t.name}</strong><span>{t.hint}</span></button>)}<button className="workbench-template custom" onClick={() => { setLibrary(false); setEditor(newCard()); }}><strong>＋ 自定义筛选卡片</strong><span>选择人员、类型、状态、版本和日期等条件</span></button></div>
