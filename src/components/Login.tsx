@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, type ConnSettings } from '../lib/api';
+import { OrbitScene } from '../features/scene/OrbitScene';
+import { SceneSettings } from '../features/scene/SceneSettings';
 
 export function Login({ onDone }: { onDone: () => void }) {
   const [username, setUsername] = useState('');
@@ -33,7 +35,7 @@ export function Login({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="login-wrap">
+    <div className="login-wrap"><OrbitScene><div className="login-scene-copy"><span>WORK IN FLOW</span><strong>需求、任务与工时<br/>在同一条轨道上。</strong></div></OrbitScene>
       <div className="login-stack">
         <form className="login" onSubmit={submit}>
           <h1>研发工作台</h1>
@@ -81,6 +83,7 @@ export function Login({ onDone }: { onDone: () => void }) {
           />
         )}
       </div>
+      <SceneSettings compact/>
     </div>
   );
 }

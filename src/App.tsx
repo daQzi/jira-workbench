@@ -19,6 +19,8 @@ import { NotificationsView } from './views/NotificationsView';
 import { McpView } from './views/McpView';
 import { TypeBadge } from './components/Badges';
 import { loadFilter, saveFilter } from './lib/filterPrefs';
+import { Toolbox } from './features/tools/Toolbox';
+import { useTools } from './features/tools/useTools';
 import { CommandPalette } from './components/CommandPalette';
 import { ProjectSwitcher } from './components/ProjectSwitcher';
 import { isValidVersion } from './lib/versions';
@@ -122,6 +124,7 @@ const NAV: { label: string; pages: Page[] }[] = [
 
 function Workspace({ onLogout }: { onLogout: () => void }) {
   const { me, bump, canWriteProject } = useSession();
+  const tools = useTools();
   const [route, go] = useRoute();
   const [creating, setCreating] = useState<CreateTarget | null>(null);
   const [palette, setPalette] = useState(false);
@@ -329,6 +332,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           onClose={() => setPalette(false)}
         />
       )}
+      {route.page === 'me' && <Toolbox data={tools.data} save={tools.save}/>}
       {creating && (
         <CreateDialog
           target={creating}

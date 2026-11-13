@@ -28,6 +28,7 @@ export interface WorkCard {
   width: CardWidth;
   /** 手动高度；undefined 表示按内容自适应 */
   height?: number;
+  hidden?: boolean;
   custom: boolean;
 }
 export function newCard(patch: Partial<WorkCard> = {}): WorkCard {
@@ -44,13 +45,25 @@ export const CARD_TEMPLATES: { name: string; hint: string; patch: Partial<WorkCa
 export function defaultCards(): WorkCard[] {
   return [0, 1, 3, 4].map(index => { const t = CARD_TEMPLATES[index]; return newCard({ ...t.patch, title: t.name, custom: false }); });
 }
+export interface Note { id: string; text: string; color: 'yellow' | 'blue' | 'green'; pinned: boolean; updated: string }
+export interface Todo { id: string; text: string; done: boolean; created: string; completed?: string }
+export type WidgetKind = 'notes' | 'todos';
+export type WorkbenchCard = WorkCard | { kind: 'widget'; widget: WidgetKind; id: string; title: string; width: CardWidth; height?: number; hidden?: boolean };
+export function newWidget(widget: WidgetKind): WorkbenchCard { return { kind: 'widget', widget, id: crypto.randomUUID(), title: widget === 'notes' ? '便签' : '个人待办', width: 1 }; }
+export const isWidget = (c: WorkbenchCard): c is Extract<WorkbenchCard, { kind: 'widget' }> => (c as { kind?: string }).kind === 'widget';
+export function validWidget(c: unknown): boolean {
+  if (!c || typeof c !== 'object') return false;
+  const w = c as Record<string, unknown>;
+  return w.kind === 'widget' && (w.widget === 'notes' || w.widget === 'todos') && typeof w.id === 'string' && !!w.id && typeof w.title === 'string' && !!w.title.trim() && w.title.length <= 40 && CARD_WIDTHS.includes(w.width as CardWidth) && (w.height === undefined || typeof w.height === 'number' && w.height >= 200 && w.height <= 900) && (w.hidden === undefined || typeof w.hidden === 'boolean');
+}
 /** 本机配置也做完整校验，避免旧格式或损坏数据造成页面崩溃。 */
-export function validCards(value: unknown): value is WorkCard[] {
+export function validCards(value: unknown): value is WorkbenchCard[] {
   if (!Array.isArray(value) || value.length > CARD_LIMIT) return false;
   const ids = new Set<string>();
   return value.every(c => {
     if (!c || typeof c !== 'object' || typeof c.id !== 'string' || !c.id || ids.has(c.id)) return false;
     ids.add(c.id);
+    if (isWidget(c)) return validWidget(c);
     return typeof c.title === 'string' && !!c.title.trim() && c.title.length <= 40
       && Object.hasOwn(RELATIONS, c.relation)
       && Array.isArray(c.stages) && c.stages.every((s: unknown) => STAGES.some(stage => stage.id === s))
@@ -58,7 +71,7 @@ export function validCards(value: unknown): value is WorkCard[] {
       && ['priority', 'version', 'text', 'dueFrom', 'dueTo'].every(k => typeof c[k] === 'string')
       && (Object.hasOwn(WORK_VIEWS, c.view) || c.view === 'any' || c.view === 'due')
       && ['updated', 'due', 'priority'].includes(c.sort) && [3, 5, 8, 10].includes(c.limit)
-      && CARD_WIDTHS.includes(c.width) && (c.height === undefined || (typeof c.height === 'number' && c.height >= 260 && c.height <= 900)) && typeof c.custom === 'boolean';
+      && CARD_WIDTHS.includes(c.width) && (c.height === undefined || (typeof c.height === 'number' && c.height >= 200 && c.height <= 900)) && typeof c.custom === 'boolean' && (c.hidden === undefined || typeof c.hidden === 'boolean');
   });
 }
 function userIs(value: unknown, user: string): boolean { return !!value && typeof value === 'object' && (value as { name?: string }).name === user; }
@@ -91,7 +104,7 @@ export function cardSummary(c: WorkCard): string {
     c.dueFrom ? `到期 ≥ ${c.dueFrom}` : '', c.dueTo ? `到期 ≤ ${c.dueTo}` : '',
   ].filter(Boolean).join(' · ');
 }
-export function needsProjectIssues(cards: WorkCard[]): boolean { return cards.some(c => c.relation === 'all'); }
+export function needsProjectIssues(cards: WorkbenchCard[]): boolean { return cards.some(c => !isWidget(c) && c.relation === 'all'); }
 export interface LegacyWorkView { id: string; name: string; prefs: { view: WorkView; text: string; version: string } }
 export function validLegacyViews(value: unknown): value is LegacyWorkView[] {
   return Array.isArray(value) && value.every(v => v && typeof v.id === 'string' && typeof v.name === 'string' && !!v.name.trim() && v.prefs && Object.hasOwn(WORK_VIEWS, v.prefs.view) && typeof v.prefs.text === 'string' && typeof v.prefs.version === 'string');
