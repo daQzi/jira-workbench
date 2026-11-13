@@ -21,7 +21,10 @@ describe('工作台本机数据与工具', () => {
   });
   it('时间戳支持秒、毫秒和本机日期，错误明确', () => {
     expect(formatTimestamp('0')).toContain('1970'); expect(formatTimestamp('1000')).toContain('1970');
-    expect(toTimestamp('1970-01-01T08:00')).toBe(0);
+    // 不依赖运行器时区：UTC 输入固定为 0，本地时间按本地日期构造后回读。
+    expect(toTimestamp('1970-01-01T00:00:00Z')).toBe(0);
+    const local = new Date(2024, 0, 2, 3, 4); const pad = (n: number) => String(n).padStart(2, '0');
+    expect(toTimestamp(`${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}T${pad(local.getHours())}:${pad(local.getMinutes())}`)).toBe(Math.floor(local.getTime() / 1000));
     expect(() => formatTimestamp('today')).toThrow('只支持数字'); expect(() => toTimestamp('bad')).toThrow('格式不正确');
   });
   it('Base64 保留中文，JSON 与文本对比不做外部请求', () => {
