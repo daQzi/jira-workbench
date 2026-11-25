@@ -9,11 +9,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkWrite as checkWritePolicy, fileResponseHeaders, isAttachmentUpload, linkDeleteId, ownedTarget, parseFilePath } from './policy.mjs';
 import { configureLlm, llmStatus, splitDaily } from './llm.mjs';
+import { DEFAULT_A8_URL, a8Cookie, createA8Store, fetchUnfilledWorkdays, testA8Connection } from './a8.mjs';
+import { listA8Templates, probeA8Template, pushA8Draft } from './a8-draft.mjs';
+import { generateWorklog } from './worklog.mjs';
 import { createSessionStore } from './sessionStore.mjs';
 import { createRememberedLoginStore, REMEMBER_SECONDS } from './remembered-login.mjs';
 import { createReadCache, readTtl } from './read-cache.mjs';
 import { createJiraScheduler, readProjects, writeProjects } from './jira-scheduler.mjs';
 import { DEFAULT_JIRA_BASE_URL, DEFAULT_LLM, isLocalRequest, jiraOrDefault, maskKey, parseSettingsInput, readJson, saveSettings } from './settings.mjs';
+import { createStack } from '../stack/index.mjs';
 
 export { DEFAULT_JIRA_BASE_URL };
 
@@ -32,8 +36,13 @@ let SERVE_DIST = false;
 let DIST_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 /** 登录页「连接设置」保存到的文件；未配置时设置只在内存生效 */
 let SETTINGS_FILE = null;
+/** 联调栈（独立子项目 stack/）：随工作台启停，配置在 stack.json */
+let stack = null;
+let STACK_UI_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'stack', 'ui');
 /** 当前生效的大模型配置（含 Key，只在本进程使用） */
 let LLM_OPTS = {};
+/** A8 工时系统配置（含密码，加密落盘；只在代理进程内使用） */
+let a8Store = null;
 
 export function parseProjects(text = '') {
   return String(text)
@@ -315,6 +324,208 @@ function publicSettings() {
   };
 }
 
+// ---------- A8 工时 ----------
+
+function a8Public() {
+  const info = a8Store ? a8Store.publicInfo() : { configured: false, url: DEFAULT_A8_URL, username: '', passwordSet: false, cookieSet: false };
+  return { ...info, saved: !!a8Store, llm: llmStatus() };
+}
+
+/** A8 地址/账号密码是本机敏感配置：读写都只允许工作台页面本身发起 */
+function assertLocal(req, res) {
+  if (!isLocalRequest(req.headers)) {
+    sendError(res, 403, '只允许本机工作台页面访问 A8 配置');
+    return false;
+  }
+  return true;
+}
+
+async function readJsonBody(req) {
+  try {
+    const value = JSON.parse((await readBody(req)).toString('utf8'));
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function handleA8ConfigGet(req, res) {
+  if (!assertLocal(req, res)) return;
+  sendJson(res, 200, a8Public());
+}
+
+async function handleA8ConfigPut(req, res) {
+  if (!assertLocal(req, res)) return;
+  const body = await readJsonBody(req);
+  if (!body) return sendError(res, 400, '请求格式错误');
+  try {
+    a8Store.save(body);
+  } catch (e) {
+    return sendError(res, e.status || 500, e.status ? e.message : `A8 配置保存失败：${e.message}`);
+  }
+  console.log(`[a8] 配置已保存：${a8Store.publicInfo().username} @ ${a8Store.publicInfo().url}`);
+  sendJson(res, 200, a8Public());
+}
+
+async function handleA8Test(req, res) {
+  if (!assertLocal(req, res)) return;
+  const cfg = a8Store?.get();
+  if (!cfg) return sendError(res, 400, '请先保存 A8 地址与账号');
+  try {
+    await testA8Connection(cfg);
+    sendJson(res, 200, { ok: true, url: cfg.url, username: cfg.username });
+  } catch (e) {
+    console.error('[a8] 连接测试失败：', e.message);
+    sendError(res, e.status || 502, e.message);
+  }
+}
+
+function requireA8(res) {
+  const cfg = a8Store?.get();
+  if (!cfg || !(cfg.password || cfg.browserCookie)) {
+    sendError(res, 400, '请先在「A8 工时」里保存 A8 地址与账号');
+    return null;
+  }
+  return cfg;
+}
+
+async function handleA8Unfilled(req, res) {
+  if (!assertLocal(req, res)) return;
+  const cfg = requireA8(res);
+  if (!cfg) return;
+  const body = await readJsonBody(req);
+  if (!body) return sendError(res, 400, '请求格式错误');
+  try {
+    const dates = await fetchUnfilledWorkdays(cfg, body.start, body.end);
+    console.log(`[a8] ${cfg.username} 未填工日 ${body.start}~${body.end}：${dates.length} 天`);
+    sendJson(res, 200, { start: body.start, end: body.end, dates });
+  } catch (e) {
+    console.error('[a8] 查询未填工日失败：', e.message);
+    sendError(res, e.status || 502, e.message);
+  }
+}
+
+/** 当月 Jira 任务：我经办或开发的问题，按更新时间倒序；只取生成提示需要的字段 */
+async function monthIssues(session, month) {
+  const jql =
+    `(assignee = currentUser() OR cf[10204] = currentUser()) AND ` +
+    `(created >= "${month}-01" OR updated >= "${month}-01") ORDER BY updated DESC`;
+  const q = new URLSearchParams({ jql, maxResults: '100', fields: 'summary,status,issuetype,updated,created' });
+  const r = await jiraFetch(session.cookies, `/rest/api/2/search?${q}`);
+  if (r.status === 401) {
+    dropSession(session.sid);
+    throw Object.assign(new Error('Jira 会话已失效，请重新登录'), { status: 401 });
+  }
+  const body = await r.json().catch(() => null);
+  if (!r.ok) throw Object.assign(new Error(body?.errorMessages?.join('；') || `Jira HTTP ${r.status}`), { status: 502 });
+  return (Array.isArray(body?.issues) ? body.issues : []).map((it) => ({
+    key: String(it.key || ''),
+    summary: String(it.fields?.summary || ''),
+    type: String(it.fields?.issuetype?.name || ''),
+    status: String(it.fields?.status?.name || ''),
+    updated: String(it.fields?.updated || ''),
+  }));
+}
+
+async function handleA8WorklogDraft(req, res) {
+  const s = getSession(req);
+  if (!s) return sendError(res, 401, '未登录');
+  if (!assertLocal(req, res)) return;
+  const cfg = requireA8(res);
+  if (!cfg) return;
+  const body = await readJsonBody(req);
+  if (!body) return sendError(res, 400, '请求格式错误');
+  const start = String(body.start || '');
+  const end = String(body.end || '');
+  const month = /^\d{4}-\d{2}$/.test(String(body.month || '')) ? String(body.month) : start.slice(0, 7);
+  try {
+    let dates = Array.isArray(body.dates)
+      ? // 前端送来的是已核对的缺失日期：仍限制在查询区间内，避免被本机其它页面塞进任意日期
+        body.dates.map((d) => String(d)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= start && d <= end)
+      : null;
+    if (dates && !dates.length) return sendJson(res, 200, { dates: [], entries: [], issues: [], model: '', message: '所选区间没有需要补填的日期' });
+    if (!dates) dates = await fetchUnfilledWorkdays(cfg, start, end);
+    dates = [...new Set(dates)].sort();
+    if (!dates.length) return sendJson(res, 200, { dates: [], entries: [], issues: [], model: '', message: '所选区间没有缺失工作日' });
+    const issues = await monthIssues(s, month);
+    const out = await generateWorklog({
+      dates,
+      issues,
+      hoursPerDay: Number(body.hoursPerDay) > 0 ? Number(body.hoursPerDay) : LLM_OPTS.maxHoursPerTask || 8,
+      promptExtra: String(body.promptExtra || LLM_OPTS.promptExtra || ''),
+    });
+    console.log(`[a8] ${s.user} 生成 ${out.entries.length} 天工时草稿（${out.model}，${out.elapsedMs}ms）`);
+    sendJson(res, 200, { ...out, dates });
+  } catch (e) {
+    console.error('[a8] 生成工时草稿失败：', e.message);
+    sendError(res, e.status || (e.name === 'TimeoutError' ? 504 : 502), e.name === 'TimeoutError' ? '大模型响应超时' : e.message);
+  }
+}
+
+/** A8 工时模板列表：只读，用于页面下拉与「推送草稿」前的确认 */
+async function handleA8Templates(req, res) {
+  if (!assertLocal(req, res)) return;
+  const cfg = requireA8(res);
+  if (!cfg) return;
+  try {
+    const cookie = await a8Cookie(cfg);
+    const templates = await listA8Templates(cfg, cookie);
+    sendJson(res, 200, { templates, current: cfg.templateId || '' });
+  } catch (e) {
+    console.error('[a8] 读取模板列表失败：', e.message);
+    sendError(res, e.status || 502, e.message);
+  }
+}
+
+/** 模板探测：告诉页面这个模板会把工时填进哪个项目/任务，避免推错 */
+async function handleA8TemplateProbe(req, res) {
+  if (!assertLocal(req, res)) return;
+  const cfg = requireA8(res);
+  if (!cfg) return;
+  const body = await readJsonBody(req);
+  if (!body) return sendError(res, 400, '请求格式错误');
+  const templateId = String(body.templateId || '').trim();
+  if (!/^\d{1,32}$/.test(templateId)) return sendError(res, 400, '模板 ID 格式不正确');
+  try {
+    const cookie = await a8Cookie(cfg);
+    sendJson(res, 200, await probeA8Template(cfg, cookie, templateId));
+  } catch (e) {
+    console.error('[a8] 模板探测失败：', e.message);
+    sendError(res, e.status || 502, e.message);
+  }
+}
+
+/**
+ * 推送草稿：把页面确认过的工时写进 A8 并保存为草稿。
+ * 这是唯一会写 A8 的接口，只接受本机同源请求，且必须已登录本工作台。
+ */
+async function handleA8PushDraft(req, res) {
+  const s = getSession(req);
+  if (!s) return sendError(res, 401, '未登录');
+  if (!assertLocal(req, res)) return;
+  const cfg = requireA8(res);
+  if (!cfg) return;
+  const body = await readJsonBody(req);
+  if (!body) return sendError(res, 400, '请求格式错误');
+  const templateId = String(body.templateId || cfg.templateId || '').trim();
+  if (!/^\d{1,32}$/.test(templateId)) return sendError(res, 400, '请先选择 A8 工时模板');
+  const entries = Array.isArray(body.entries) ? body.entries : [];
+  if (!entries.length) return sendError(res, 400, '没有可推送的工时');
+  try {
+    const cookie = await a8Cookie(cfg);
+    const out = await pushA8Draft(cfg, cookie, {
+      templateId,
+      entries,
+      summary: String(body.summary || '').slice(0, 500),
+    });
+    console.log(`[a8] ${s.user} 已推送 A8 草稿：${out.days} 天 / ${out.hours}h（${out.subject}）`);
+    sendJson(res, 200, out);
+  } catch (e) {
+    console.error('[a8] 推送草稿失败：', e.message);
+    sendError(res, e.status || 502, e.message);
+  }
+}
+
 /** 登录页读取连接设置；不需要登录，但不含 Key 明文 */
 function handleGetSettings(req, res) {
   if (!isLocalRequest(req.headers)) return sendError(res, 403, '只允许本机页面访问');
@@ -521,6 +732,22 @@ async function serveStatic(res, url) {
   }
 }
 
+/** 联调栈控制台：/stack/ 挂一份静态 UI，数据走 /api/stack/* */
+const STACK_MIME = { ...MIME, '.woff': 'font/woff', '.ttf': 'font/ttf', '.map': 'application/json; charset=utf-8' };
+
+async function serveStackUi(res, url) {
+  const rel = decodeURIComponent(url.pathname).replace(/^\/stack(?:-ui)?\/?/, '') || 'index.html';
+  const file = path.resolve(STACK_UI_DIR, rel);
+  if (!file.startsWith(STACK_UI_DIR + path.sep) && file !== STACK_UI_DIR) return sendError(res, 403, 'forbidden');
+  try {
+    const data = await readFile(file);
+    res.writeHead(200, { 'Content-Type': STACK_MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+    res.end(data);
+  } catch {
+    sendError(res, 404, '联调栈界面缺失');
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || HOST}`);
   try {
@@ -540,6 +767,25 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/settings' && req.method === 'GET') return handleGetSettings(req, res);
     if (url.pathname === '/api/settings' && req.method === 'PUT') return await handlePutSettings(req, res);
     if (url.pathname === '/api/llm/split' && req.method === 'POST') return await handleLlmSplit(req, res);
+    // A8 工时：配置、连接测试、未填工日、模型生成草稿
+    if (url.pathname === '/api/a8/config' && req.method === 'GET') return handleA8ConfigGet(req, res);
+    if (url.pathname === '/api/a8/config' && req.method === 'PUT') return await handleA8ConfigPut(req, res);
+    if (url.pathname === '/api/a8/test' && req.method === 'POST') return await handleA8Test(req, res);
+    if (url.pathname === '/api/a8/unfilled' && req.method === 'POST') return await handleA8Unfilled(req, res);
+    if (url.pathname === '/api/a8/worklog-draft' && req.method === 'POST') return await handleA8WorklogDraft(req, res);
+    if (url.pathname === '/api/a8/templates' && req.method === 'POST') return await handleA8Templates(req, res);
+    if (url.pathname === '/api/a8/template' && req.method === 'POST') return await handleA8TemplateProbe(req, res);
+    if (url.pathname === '/api/a8/push' && req.method === 'POST') return await handleA8PushDraft(req, res);
+    // 联调栈：只允许本机页面操作（会拉起本机子进程）
+    if (url.pathname.startsWith('/api/stack/')) {
+      if (!stack) return sendError(res, 503, '联调栈未启用');
+      if (req.method !== 'GET' && !isLocalRequest(req.headers)) return sendError(res, 403, '只允许本机页面操作联调栈');
+      return await stack.handle(req, res, url);
+    }
+    if (url.pathname === '/api/stack') return sendJson(res, 200, stack ? stack.status() : { enabled: false });
+    if ((url.pathname === '/stack' || url.pathname === '/stack/' || url.pathname.startsWith('/stack/')) && req.method === 'GET') {
+      return await serveStackUi(res, url);
+    }
     if (url.pathname.startsWith('/api/jira/')) return await handleJiraProxy(req, res, url);
     if (url.pathname.startsWith('/api/file/')) return await handleFile(req, res, url);
     if (url.pathname.startsWith('/api/')) return sendError(res, 404, '未知接口');
@@ -555,7 +801,7 @@ const server = http.createServer(async (req, res) => {
 
 /**
  * 启动代理。port=0 时由系统分配；返回实际监听的地址。
- * @param {{jiraBaseUrl: string, port?: number, allowWrite?: boolean, writeProjects?: string[], serveDist?: boolean, distDir?: string, llm?: object, sessionDir?: string, settingsFile?: string, jiraConcurrency?: number}} opts
+ * @param {{jiraBaseUrl: string, port?: number, allowWrite?: boolean, writeProjects?: string[], serveDist?: boolean, distDir?: string, llm?: object, sessionDir?: string, settingsFile?: string, a8File?: string, jiraConcurrency?: number}} opts
  */
 export async function startServer(opts) {
   jiraScheduler = createJiraScheduler({ concurrency: opts.jiraConcurrency ?? Number(process.env.WB_JIRA_CONCURRENCY || 2) });
@@ -568,14 +814,30 @@ export async function startServer(opts) {
   ALLOW_WRITE = !!opts.allowWrite;
   WRITE_PROJECTS = opts.writeProjects ?? [];
   SERVE_DIST = !!opts.serveDist;
-  if (opts.distDir) DIST_DIR = opts.distDir;
+  if (opts.distDir) DIST_DIR = path.resolve(opts.distDir);
+  if (opts.stackUiDir) STACK_UI_DIR = opts.stackUiDir;
   configureLlm(LLM_OPTS);
+  // A8 配置与登录会话同目录；命令行模式落在 .wb-data，桌面版落在 config.json 旁边
+  const a8File = opts.a8File || (SETTINGS_FILE ? path.join(path.dirname(SETTINGS_FILE), 'a8.json') : null);
+  a8Store = a8File ? createA8Store(a8File) : null;
   sessions.clear();
   readCache.clear();
   cacheRevision++; allProjectsRevision = cacheRevision; projectRevisions.clear();
   store = opts.sessionDir ? createSessionStore(opts.sessionDir) : null;
   rememberedLogin = opts.sessionDir ? createRememberedLoginStore(path.join(opts.sessionDir, 'remembered-login')) : null;
   if (store) for (const [sid, s] of store.load(SESSION_IDLE_MS)) sessions.set(sid, s);
+  // 联调栈：配置随工作台落在同一目录（stack.json），启动时按用户策略自动拉起
+  if (opts.stack !== false) {
+    try {
+      stack = createStack({
+        configPath: opts.stackConfigPath || (SETTINGS_FILE ? path.join(path.dirname(SETTINGS_FILE), 'stack.json') : undefined),
+        onLog: (id, line) => console.log(`[stack:${id}] ${line}`),
+      });
+    } catch (e) {
+      stack = null;
+      console.error('[stack] 初始化失败：', e.message);
+    }
+  }
   await mcp?.close();
   mcp = createMcpFeature({
     dir: SETTINGS_FILE ? path.dirname(SETTINGS_FILE) : opts.sessionDir,
@@ -619,14 +881,23 @@ export async function startServer(opts) {
       const scope = WRITE_PROJECTS.length ? `仅 ${WRITE_PROJECTS.join(',')}` : '全部项目';
       const llm = llmStatus();
       console.log(`[proxy] http://${HOST}:${port} -> ${JIRA_BASE_URL}  写操作：${ALLOW_WRITE ? `已开启（${scope}）` : '关闭（只读）'}  大模型：${llm.enabled ? llm.model : '未配置'}  已恢复登录：${sessions.size}`);
+      if (stack) {
+        console.log(`[stack] 控制台 http://${HOST}:${port}/stack/  配置：${stack.configPath}`);
+        stack.start().catch((e) => console.error('[stack] 自动启动失败：', e.message));
+      }
       resolve({ url: `http://${HOST}:${port}`, port });
     });
   });
 }
 
-export function stopServer() {
+export async function stopServer() {
   if (saveTimer) persistSessions(true);
-  return new Promise((resolve) => (server.listening ? server.close(async () => { await mcp?.close(); mcp = null; resolve(); }) : resolve()));
+  // 先收拾联调栈拉起的子进程（前端 dev server），否则它们会成为孤儿继续占端口
+  if (stack) {
+    await stack.stop().catch((e) => console.error('[stack] 停止失败：', e.message));
+    stack = null;
+  }
+  await new Promise((resolve) => (server.listening ? server.close(async () => { await mcp?.close(); mcp = null; resolve(); }) : resolve()));
 }
 
 /** 大模型配置的环境变量（命令行模式）；Key 不写进代码和配置模板 */

@@ -56,6 +56,8 @@ function copyApp(dest) {
     if (f.endsWith('.mjs') && !f.endsWith('.test.mjs')) cpSync(path.join(ROOT, 'server', f), path.join(dest, 'server', f));
   }
   run(process.execPath, ['scripts/build-server.mjs', path.join(dest, 'server')]);
+  // 联调栈静态界面（server/index.mjs 默认从 ../stack/ui 读取）
+  cpSync(path.join(ROOT, 'stack', 'ui'), path.join(dest, 'stack', 'ui'), { recursive: true });
   writeFileSync(path.join(dest, 'package.json'), JSON.stringify({ type: 'module', private: true, version: pkg.version }) + '\n');
 }
 

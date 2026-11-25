@@ -1,0 +1,14 @@
+{
+  "name": "wb-stack",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "一体化联调栈：多环境反向代理 + 本地前端服务编排（可独立运行）",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test stack.test.mjs"
+  },
+  "dependencies": {},
+  "engines": { "node": ">=18" }
+}

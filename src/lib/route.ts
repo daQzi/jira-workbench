@@ -1,7 +1,7 @@
 // 路由写在 hash 里：#/<项目|ALL>/<页面>?issue=KEY，刷新/分享可还原。
 // 当前项目是全局维度，所有页面都按它查询；ALL 表示跨项目（只有个人页面可用）。
-export type Page = 'me' | 'hours' | 'tree' | 'flat' | 'board' | 'mcp' | 'versions' | 'notifications';
-export const PAGES: Page[] = ['me', 'hours', 'tree', 'flat', 'board', 'mcp', 'versions', 'notifications'];
+export type Page = 'me' | 'hours' | 'a8' | 'tree' | 'flat' | 'board' | 'mcp' | 'versions' | 'notifications' | 'stack';
+export const PAGES: Page[] = ['me', 'hours', 'a8', 'tree', 'flat', 'board', 'mcp', 'versions', 'notifications', 'stack'];
 /** 只能在具体项目下使用的页面 */
 export const PROJECT_PAGES: Page[] = ['tree', 'flat', 'board', 'versions'];
 export const ALL = 'ALL';
@@ -16,6 +16,9 @@ export interface Route {
   /** 我的工作台中展开的本机卡片 */
   card?: string | null;
 }
+
+/** 不依赖具体项目、也不依赖登录数据的本机工具页 */
+export const LOCAL_PAGES: Page[] = ['mcp', 'stack'];
 
 const isPage = (s: string | undefined): s is Page => !!s && (PAGES as string[]).includes(s);
 

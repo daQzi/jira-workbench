@@ -25,6 +25,46 @@ export function llmStatus() {
   return { enabled: !!(cfg.baseUrl && cfg.model && cfg.apiKey), model: cfg.model, maxHoursPerTask: cfg.maxHoursPerTask };
 }
 
+/** 其它模块（如 A8 工时补全）复用同一份模型配置 */
+export function llmConfigured() {
+  return !!(cfg.baseUrl && cfg.model && cfg.apiKey);
+}
+
+export function llmModel() {
+  return cfg.model;
+}
+
+/**
+ * 通用 JSON 对话，返回原始文本。调用方自己解析结构。
+ * 模型配置与 Key 只在代理进程内使用。
+ */
+export async function completeJson(messages, { temperature = 0, maxTokens } = {}) {
+  if (!llmConfigured()) throw Object.assign(new Error('未配置大模型（baseUrl / model / apiKey）'), { status: 503 });
+  const started = Date.now();
+  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+    body: JSON.stringify({
+      model: cfg.model,
+      temperature,
+      response_format: { type: 'json_object' },
+      ...(maxTokens ? { max_tokens: maxTokens } : {}),
+      messages,
+    }),
+    signal: AbortSignal.timeout(cfg.timeoutMs),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg = body?.error?.message || `HTTP ${res.status}`;
+    throw Object.assign(new Error(`大模型调用失败：${String(msg).slice(0, 200)}`), { status: 502 });
+  }
+  const content = body?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string' || !content.trim()) {
+    throw Object.assign(new Error('大模型没有返回内容'), { status: 502 });
+  }
+  return { content, model: cfg.model, elapsedMs: Date.now() - started };
+}
+
 export function buildMessages({ text, date, defaultProject, projects = [] }, max = cfg.maxHoursPerTask, extra = cfg.promptExtra) {
   const system = [
     '你是研发团队的工时助手，把用户的日报整理成 Jira 任务。只输出一个 JSON 对象，不要输出解释或代码块标记。',

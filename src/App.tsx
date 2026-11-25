@@ -22,9 +22,11 @@ import { loadLastProject, parseHash, pickProject, PROJECT_PAGES, saveLastProject
 const TreeView = lazy(() => import('./views/TreeView').then(m => ({ default: m.TreeView })));
 const BoardView = lazy(() => import('./views/BoardView').then(m => ({ default: m.BoardView })));
 const HoursWorkspace = lazy(() => import('./views/HoursWorkspace').then(m => ({ default: m.HoursWorkspace })));
+const A8WorklogView = lazy(() => import('./views/A8WorklogView').then(m => ({ default: m.A8WorklogView })));
 const VersionView = lazy(() => import('./views/VersionView').then(m => ({ default: m.VersionView })));
 const NotificationsView = lazy(() => import('./views/NotificationsView').then(m => ({ default: m.NotificationsView })));
 const McpView = lazy(() => import('./views/McpView').then(m => ({ default: m.McpView })));
+const StackView = lazy(() => import('./views/StackView').then(m => ({ default: m.StackView })));
 const IssueDrawer = lazy(() => import('./components/IssueDrawer').then(m => ({ default: m.IssueDrawer })));
 const CreateDialog = lazy(() => import('./components/CreateDialog').then(m => ({ default: m.CreateDialog })));
 const Toolbox = lazy(() => import('./features/tools/Toolbox').then(m => ({ default: m.Toolbox })));
@@ -120,11 +122,11 @@ export function App() {
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
-const PAGE_LABEL: Record<Page, string> = { me: '我的工作台', hours: '我的工时', tree: '需求树', flat: '全部问题', board: '看板', mcp: 'MCP 服务', versions: '版本进展', notifications: '通知中心' };
+const PAGE_LABEL: Record<Page, string> = { me: '我的工作台', hours: '我的工时', a8: 'A8 工时补全', tree: '需求树', flat: '全部问题', board: '看板', mcp: 'MCP 服务', versions: '版本进展', notifications: '通知中心', stack: '联调栈' };
 const NAV: { label: string; pages: Page[] }[] = [
-  { label: '个人', pages: ['me', 'hours', 'notifications'] },
+  { label: '个人', pages: ['me', 'hours', 'a8', 'notifications'] },
   { label: '项目', pages: ['tree', 'flat', 'board', 'versions'] },
-  { label: '设置', pages: ['mcp'] },
+  { label: '设置', pages: ['mcp', 'stack'] },
 ];
 
 function Workspace({ onLogout }: { onLogout: () => void }) {
@@ -271,9 +273,11 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           <div className="title-block">
             <h1>{PAGE_LABEL[route.page]}</h1>
             <div className="sub">
-              <span className="scope-tag">{route.page === 'mcp' ? '本机设置' : scopeText}</span>
+              <span className="scope-tag">{route.page === 'mcp' || route.page === 'stack' || route.page === 'a8' ? '本机设置' : scopeText}</span>
               {route.page === 'me' && '我参与的事项、临期风险与最近完成工作'}
               {route.page === 'hours' && '开发人员是我的问题，按时间统计（按父需求分组）'}
+              {route.page === 'a8' && '查询 A8 未填写工日，按当月 Jira 任务生成工时草稿'}
+              {route.page === 'stack' && '一键切换联调环境，管理本地前端服务的启动与日志'}
               {projectPage && '父子关系按「子项 blocks 需求」识别'}
             </div>
           </div>
@@ -312,7 +316,9 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         <div className="content" style={projectPage ? undefined : { paddingTop: 16 }}>
           <Suspense fallback={<Loading rows={6}/>}>
           {route.page === 'mcp' && <McpView />}
+          {route.page === 'stack' && <StackView />}
           {route.page === 'hours' && <HoursWorkspace key={pk ?? '*'} projectKey={pk} onOpen={openIssue} tab={route.tab === 'review' ? 'review' : 'report'} onTabChange={tab => go({ tab: tab === 'review' ? 'review' : null })} />}
+          {route.page === 'a8' && <A8WorklogView />}
           {route.page === 'versions' && pk && <VersionView key={pk} projectKey={pk} onOpen={openIssue}/>}
           {route.page === 'notifications' && <NotificationsView projectKey={pk} onOpen={openIssue} onMcp={()=>go({page:'mcp',issue:null})}/>}
           {route.page === 'me' && <MyWorkView projectKey={pk} onOpen={openIssue} onCreate={setCreating} cardId={route.card ?? null} onCardChange={changeCard} />}

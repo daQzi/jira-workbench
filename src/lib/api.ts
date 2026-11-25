@@ -136,6 +136,74 @@ export interface ConnSettingsInput {
   llmApiKey: string;
 }
 
+/** A8 工时系统：页面只能拿到配置状态，密码与 Cookie 不下发 */
+export interface A8Config {
+  configured: boolean;
+  url: string;
+  username: string;
+  passwordSet: boolean;
+  cookieSet: boolean;
+  /** 已保存的 A8 工时模板 ID；空串表示还没选 */
+  templateId?: string;
+  updatedAt?: string | null;
+  saved: boolean;
+  llm: { enabled: boolean; model: string; maxHoursPerTask: number };
+}
+
+export interface A8ConfigInput {
+  url: string;
+  username: string;
+  /** 留空表示沿用已保存的密码 */
+  password: string;
+  browserCookie: string;
+  templateId?: string;
+}
+
+export interface A8WorklogEntry {
+  activityDate: string;
+  jobType: string;
+  hours: number;
+  description: string;
+  jiraKeys: string[];
+}
+
+export interface A8WorklogDraft {
+  dates: string[];
+  entries: A8WorklogEntry[];
+  issues: { key: string; summary: string; type: string; status: string; updated: string }[];
+  model: string;
+  elapsedMs?: number;
+  incomplete?: boolean;
+  /** 部分批次失败（多为超时）时，失败日期以空描述返回 */
+  failedBatches?: number;
+  message?: string;
+}
+
+export interface A8Template {
+  id: string;
+  name: string;
+}
+
+/** 模板探测结果：这个模板会把工时填进哪个项目/任务 */
+export interface A8TemplateProbe {
+  templateId: string;
+  project: { name: string; code: string; status: string };
+  task: string;
+  jobType: string;
+  /** A8 模板自带的提示（项目结项工时余额、填报期冻结等） */
+  warnings: string[];
+}
+
+export interface A8PushResult {
+  templateId: string;
+  summaryId: string;
+  contentId: string;
+  contentDataId: string;
+  subject: string;
+  days: number;
+  hours: number;
+}
+
 export interface CreateMetaType {
   id: string;
   name: string;
@@ -254,6 +322,21 @@ export const api = {
   /** 日报交给大模型拆成任务草稿（经本地代理，Key 不进浏览器） */
   llmSplit: (body: { text: string; date: string; defaultProject: string; projects: string[] }) =>
     writeOnce(`llm:${JSON.stringify(body)}`, () => request<{ tasks: LlmTask[]; model: string; elapsedMs: number }>('POST', '/api/llm/split', body)),
+
+  /** A8 工时：配置与密码只经本机代理，页面读不到明文 */
+  a8Config: () => request<A8Config>('GET', '/api/a8/config'),
+  a8SaveConfig: (input: A8ConfigInput) =>
+    writeOnce(`a8:config:${JSON.stringify(input)}`, () => request<A8Config>('PUT', '/api/a8/config', input)),
+  a8Test: () => writeOnce('a8:test', () => request<{ ok: boolean; url: string; username: string }>('POST', '/api/a8/test', {})),
+  a8Unfilled: (body: { start: string; end: string }) =>
+    writeOnce(`a8:unfilled:${body.start}:${body.end}`, () => request<{ start: string; end: string; dates: string[] }>('POST', '/api/a8/unfilled', body)),
+  a8WorklogDraft: (body: { start: string; end: string; month: string; dates: string[]; hoursPerDay: number }) =>
+    writeOnce(`a8:draft:${JSON.stringify(body)}`, () => request<A8WorklogDraft>('POST', '/api/a8/worklog-draft', body)),
+  a8Templates: () => request<{ templates: A8Template[]; current: string }>('POST', '/api/a8/templates', {}),
+  a8ProbeTemplate: (templateId: string) =>
+    request<A8TemplateProbe>('POST', '/api/a8/template', { templateId }),
+  a8PushDraft: (body: { templateId: string; entries: A8WorklogEntry[]; summary: string }) =>
+    writeOnce(`a8:push:${JSON.stringify(body)}`, () => request<A8PushResult>('POST', '/api/a8/push', body)),
 
   /** 上传附件（multipart，字段名必须是 file） */
   uploadAttachments(key: string, files: File[]): Promise<Attachment[]> {
